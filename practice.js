@@ -3,11 +3,11 @@
 (function () {
   'use strict';
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const norm = s => String(s || '').normalize('NFC').replace(/[\s.?!,~]/g, '').toLowerCase();
+  const norm = s => String(s || '').normalize('NFC').replace(/[\s.?!,~·…'"’‘“”«»()[\]{}​-‍﻿]/g, '').toLowerCase();
   const okText = (val, a, alt) => [a].concat(alt || []).some(x => norm(x) === norm(val));
   const shuffle = arr => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const say = (t, slow) => window.KS && window.KS.speak(t, slow ? 0.6 : 0.85);
-  const field = (attrs) => `<input type="text" class="ex-input p-in ko" autocomplete="off" autocapitalize="off" spellcheck="false" ${attrs || ''}>`;
+  const field = (attrs) => `<input type="text" class="ex-input p-in ko" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" ${attrs || ''}>`;
 
   const TYPE = {
     match: ['짝 맞추기', 'Знайди пари'], tf: ['보기와 같이', 'Зроби за зразком'], dlg: ['대화 완성', 'Доповни діалог'],
@@ -158,6 +158,8 @@
         return;
       }
       if (t.dataset.p !== 'check') return;
+      /* commit any unfinished Korean IME syllable before reading the inputs */
+      if (document.activeElement && card.contains(document.activeElement) && document.activeElement.blur) document.activeElement.blur();
 
       /* ---- check ---- */
       let right = 0, total = 0;
@@ -220,7 +222,12 @@
     });
     /* dictation/choice selects need no handler; Enter in inputs triggers check */
     root.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && e.target.matches('.p-in')) { e.preventDefault(); const b = e.target.closest('.pitem').querySelector('[data-p="check"]'); if (b) b.click(); }
+      /* Enter while the IME is still composing (e.g. last 한글 syllable) must not grade yet */
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && e.target.matches('.p-in')) {
+        e.preventDefault();
+        const b = e.target.closest('.pitem').querySelector('[data-p="check"]');
+        if (b) setTimeout(() => b.click(), 0);
+      }
     });
   }
 

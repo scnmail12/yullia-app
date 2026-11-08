@@ -168,8 +168,18 @@
 
   window.KSAuth = { push, logout, listProfiles, setStatus };
 
+  /* ---------- local developer mode (localhost + ?dev only): reads ./content/data, no login ---------- */
+  async function devBoot() {
+    const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src + '?' + Date.now(); s.onload = res; s.onerror = rej; document.body.appendChild(s); });
+    for (const f of ['1a', '1b', 'practice-1a', 'practice-1b', 'weekly']) await load('content/data/' + f + '.js');
+    window.KS_USER = { id: 'dev', email: 'dev@localhost', name: 'Dev', role: 'teacher' };
+    gate.hidden = true; app.hidden = false; tabbar.hidden = false;
+    await load('practice.js'); await load('app.js');
+  }
+
   /* ---------- boot ---------- */
   (async function boot() {
+    if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && /[?&]dev\b/.test(location.search)) return devBoot();
     if (!window.supabase || !C.supabaseUrl || !C.supabaseKey) {
       return show(msg('Додаток ще не налаштовано (config.js) або немає інтернету.', 'err') + '<button class="btn" onclick="location.reload()" style="width:100%">Оновити</button>');
     }

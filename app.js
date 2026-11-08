@@ -30,28 +30,57 @@
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
   const view = $('#view');
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms || 1800);
   }
   const today = () => new Date().toISOString().slice(0, 10);
   const fmtDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return d; } };
   const unitLabel = u => u.no === 0 ? '한글' : u.no + '과';
   const fullLabel = u => u.no === 0 ? esc(u.title) : u.no + '과 ' + esc(u.title);
-  const norm = s => String(s || '').replace(/[\s.?!,]/g, '').toLowerCase();
+  /* answer comparison: same rules as practice.js */
+  const norm = s => String(s || '').normalize('NFC').replace(/[\s.?!,~·…'"’‘“”«»()[\]{}​-‍﻿]/g, '').toLowerCase();
 
-  /* Korean text-to-speech (works in Safari / Chrome when a Korean voice exists) */
-  function speak(text, rate) {
-    if (!('speechSynthesis' in window)) { toast('Озвучення недоступне на цьому пристрої'); return; }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ko-KR'; u.rate = rate || 0.85;
-    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('ko'));
-    if (v) u.voice = v;
-    else if (speechSynthesis.getVoices().length) toast('Немає корейського голосу — встанови його в налаштуваннях пристрою');
-    speechSynthesis.speak(u);
+  /* Korean text-to-speech.
+     Works around: Safari dropping speech when speak() follows cancel() in the same tick,
+     voices loading late (iOS returns [] at first), Chrome garbage-collecting utterances,
+     and devices with no Korean voice installed (we explain how to add one). */
+  const TTS = 'speechSynthesis' in window ? window.speechSynthesis : null;
+  let koVoice = null, voicesLoaded = false, liveUtterance = null;
+  function pickVoice() {
+    if (!TTS) return;
+    const vs = TTS.getVoices();
+    if (vs.length) voicesLoaded = true;
+    const ko = vs.filter(v => /^ko([-_]|$)/i.test(v.lang || ''));
+    koVoice = ko.find(v => /yuna|유나|heami|sora|google/i.test(v.name) && v.localService) || ko.find(v => v.localService) || ko[0] || null;
   }
-  window.KS = { speak, toast: m => toast(m) };
+  if (TTS) { pickVoice(); if (TTS.addEventListener) TTS.addEventListener('voiceschanged', pickVoice); else TTS.onvoiceschanged = pickVoice; }
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function voiceHelp() {
+    const how = ios ? 'iPhone/iPad: Параметри → Універсальний доступ → Усний контент → Голоси → Корейська (завантаж). Також вимкни беззвучний режим.'
+      : /android/i.test(navigator.userAgent) ? 'Android: Налаштування → Система → Мова → Синтез мовлення → Google → встанови корейську.'
+      : 'Windows: Параметри → Час і мова → Мовлення → Додати голоси → Корейська.';
+    toast('Немає корейського голосу на пристрої. ' + how, 9000);
+  }
+  function speak(text, rate) {
+    if (!TTS) { toast('Озвучення недоступне в цьому браузері', 3000); return; }
+    pickVoice();
+    if (voicesLoaded && !koVoice) { voiceHelp(); return; }
+    const go = () => {
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ko-KR'; u.rate = rate || 0.85;
+      if (koVoice) u.voice = koVoice;
+      let started = false;
+      u.onstart = () => { started = true; };
+      u.onerror = e => { if (!/interrupted|canceled/.test(e.error || '')) toast('Не вдалося відтворити звук (' + (e.error || '?') + ')', 3000); };
+      liveUtterance = u;               // keep a reference so it is not garbage-collected mid-speech
+      TTS.resume();                    // Chrome sometimes stays "paused"
+      TTS.speak(u);
+      setTimeout(() => { if (!started && liveUtterance === u && !TTS.speaking) (koVoice ? toast(ios ? 'Звуку немає? Вимкни беззвучний режим і збільш гучність.' : 'Звуку немає? Перевір гучність.', 4000) : voiceHelp()); }, 2500);
+    };
+    if (TTS.speaking || TTS.pending) { TTS.cancel(); setTimeout(go, 150); } else go();
+  }
+  window.KS = { speak, toast: (m, ms) => toast(m, ms) };
   const sayBtn = text => `<button class="icon-btn" data-say="${esc(text)}" aria-label="Прослухати" title="Прослухати">🔊</button>`;
 
   /* ---------- icons ---------- */
@@ -306,11 +335,12 @@
       <div class="ex-prompt ko">${i + 1}. ${esc(x.q)}</div>
       ${x.hint ? `<div class="muted small" style="margin:-4px 0 8px">${esc(x.hint)}</div>` : ''}
       ${x.o ? `<div class="opts">${x.o.map(o => `<button class="opt ko" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>`
-            : `<input type="text" class="ex-input ko" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Відповідь корейською">`}
+            : `<input type="text" class="ex-input ko" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Відповідь корейською">`}
       <div class="ex-fb"></div>
     </div>`;
   }
   function checkEx(u) {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); // commit IME
     let right = 0;
     u.exercises.forEach((x, i) => {
       const box = $(`.ex-q[data-i="${i}"]`, view);
