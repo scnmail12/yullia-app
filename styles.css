@@ -334,6 +334,16 @@ details.lesson > div { padding-top: 12px; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 @media (min-width: 861px) { .toast { bottom: 28px; } }
 
+/* settings shortcut (phones: settings is not in the tab bar) */
+.gear-fab { display: none; }
+@media (max-width: 860px) {
+  .gear-fab { display: grid; place-items: center; position: fixed; z-index: 21; top: calc(10px + env(safe-area-inset-top)); right: 12px;
+    width: 42px; height: 42px; border-radius: 50%; color: var(--ink); background: color-mix(in srgb, var(--surface) 85%, transparent);
+    border: 1px solid var(--border); box-shadow: var(--shadow); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .gear-fab svg { width: 22px; height: 22px; }
+  .gear-fab[hidden] { display: none !important; }
+}
+
 /* ---------- Access gate ---------- */
 [hidden] { display: none !important; }
 .gate { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px calc(24px + env(safe-area-inset-bottom));

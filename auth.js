@@ -146,7 +146,7 @@
   }
   function start() {
     window.KS_USER = { id: user.id, email: profile.email, name: profile.name, role: profile.role };
-    gate.hidden = true; gate.innerHTML = ''; app.hidden = false; tabbar.hidden = false;
+    gate.hidden = true; gate.innerHTML = ''; app.hidden = false; tabbar.hidden = false; document.getElementById('gear-fab').hidden = false;
     const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.body.appendChild(s); });
     load('practice.js').then(() => load('app.js'));
   }
@@ -173,7 +173,7 @@
     const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src + '?' + Date.now(); s.onload = res; s.onerror = rej; document.body.appendChild(s); });
     for (const f of ['1a', '1b', 'practice-1a', 'practice-1b', 'weekly']) await load('content/data/' + f + '.js');
     window.KS_USER = { id: 'dev', email: 'dev@localhost', name: 'Dev', role: 'teacher' };
-    gate.hidden = true; app.hidden = false; tabbar.hidden = false;
+    gate.hidden = true; app.hidden = false; tabbar.hidden = false; document.getElementById('gear-fab').hidden = false;
     await load('practice.js'); await load('app.js');
   }
 
