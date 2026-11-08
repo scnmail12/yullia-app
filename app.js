@@ -64,8 +64,29 @@
   }
   const ttsLog = [];
   const logTTS = m => { ttsLog.push(new Date().toLocaleTimeString() + ' ' + m); if (ttsLog.length > 12) ttsLog.shift(); };
+  /* iPhone silent switch mutes web speech. Switching the page's audio session to "playback"
+     (iOS 17+ Audio Session API) and starting a silent media element inside the tap makes speech
+     behave like music: audible even when the ringer is off. */
+  let silentAudio = null;
+  function silentWavUrl() {
+    const n = 800, b = new Uint8Array(44 + n), d = new DataView(b.buffer);
+    const str = (o, s) => [...s].forEach((c, i) => b[o + i] = c.charCodeAt(0));
+    str(0, 'RIFF'); d.setUint32(4, 36 + n, true); str(8, 'WAVEfmt '); d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+    d.setUint32(24, 8000, true); d.setUint32(28, 8000, true); d.setUint16(32, 1, true); d.setUint16(34, 8, true); str(36, 'data'); d.setUint32(40, n, true);
+    b.fill(128, 44);
+    return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+  }
+  function iosAudioPlayback() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    try {
+      if (!silentAudio) { silentAudio = new Audio(silentWavUrl()); silentAudio.setAttribute('playsinline', ''); silentAudio.loop = false; }
+      silentAudio.currentTime = 0;
+      const p = silentAudio.play(); if (p && p.catch) p.catch(() => {});
+    } catch (e) {}
+  }
   function speak(text, rate) {
     if (!TTS) { toast('Озвучення недоступне в цьому браузері', 3000); logTTS('no speechSynthesis'); return; }
+    if (ios) iosAudioPlayback();
     pickVoice();
     if (voicesLoaded && !koVoice) { logTTS('no Korean voice'); voiceHelp(); return; }
     /* Everything below runs synchronously inside the tap — required by iOS Safari. */
@@ -95,7 +116,7 @@
     return {
       supported: !!TTS, voices: vs.length,
       korean: vs.filter(v => /^ko/i.test(v.lang || '')).map(v => `${v.name} (${v.lang}${v.localService ? '' : ', online'})`),
-      chosen: koVoice ? koVoice.name : '—', standalone: !!(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone),
+      chosen: koVoice ? koVoice.name : '—', session: navigator.audioSession ? navigator.audioSession.type : 'n/a', standalone: !!(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone),
       ua: navigator.userAgent, log: ttsLog.slice()
     };
   }
@@ -149,7 +170,13 @@
     const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     let hideInstall = false; try { hideInstall = localStorage.getItem('ks-install-hide') === '1'; } catch (e) {}
-    const install = standalone || hideInstall ? '' : `
+    const kakao = /KAKAOTALK/i.test(navigator.userAgent);
+    const install = kakao ? `
+      <div class="card install"><div class="ico-big">🧭</div><div class="grow" style="flex:1">
+        <h3 style="margin:0 0 4px">Відкрий у Safari</h3>
+        <p class="small" style="margin:0 0 10px">Зараз студія відкрита всередині KakaoTalk — тут може не працювати звук і встановлення на головний екран.</p>
+        <a class="btn sm" href="kakaotalk://web/openExternal?url=${encodeURIComponent(location.href.split('#')[0])}">Відкрити в Safari</a></div></div>`
+      : standalone || hideInstall ? '' : `
       <div class="card install"><div class="ico-big">📲</div><div class="grow" style="flex:1">
         <h3 style="margin:0 0 4px">Встанови як додаток</h3>
         <p class="small" style="margin:0 0 8px">${ios
@@ -670,7 +697,7 @@
     box.textContent = [
       `Підтримка: ${i.supported ? 'так' : 'НІ'} · голосів: ${i.voices} · як додаток: ${i.standalone ? 'так' : 'ні'}`,
       `Корейські голоси: ${i.korean.length ? i.korean.join(', ') : 'НЕМАЄ'}`,
-      `Обраний: ${i.chosen}`,
+      `Обраний: ${i.chosen} · audioSession: ${i.session}`,
       `Журнал: ${i.log.length ? i.log.join(' | ') : '—'}`,
       i.ua
     ].join('\n');
