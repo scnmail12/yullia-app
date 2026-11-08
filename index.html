@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>한국어 스튜디오</title>
+  <meta name="description" content="Особистий простір для вивчення корейської">
+  <meta name="theme-color" content="#EAF6FF">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="한국어 스튜디오">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=Noto+Sans+KR:wght@400..700&family=Noto+Serif+KR:wght@500..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script>try{var t=localStorage.getItem('korean-studio-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+  <div class="gate" id="gate"></div>
+  <div class="app" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#/home">
+        <span class="brand-mark">한</span>
+        <span class="brand-text">한국어 스튜디오<small>Korean Studio</small></span>
+      </a>
+      <nav class="nav" id="nav"></nav>
+    </aside>
+    <main class="main" id="view" tabindex="-1"></main>
+  </div>
+  <nav class="tabbar" id="tabbar" hidden></nav>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Course content is NOT shipped with the site: auth.js loads it from Supabase after login + approval,
+       then starts practice.js and app.js. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="auth.js"></script>
+</body>
+</html>
