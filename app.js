@@ -62,25 +62,44 @@
       : 'Windows: Параметри → Час і мова → Мовлення → Додати голоси → Корейська.';
     toast('Немає корейського голосу на пристрої. ' + how, 9000);
   }
+  const ttsLog = [];
+  const logTTS = m => { ttsLog.push(new Date().toLocaleTimeString() + ' ' + m); if (ttsLog.length > 12) ttsLog.shift(); };
   function speak(text, rate) {
-    if (!TTS) { toast('Озвучення недоступне в цьому браузері', 3000); return; }
+    if (!TTS) { toast('Озвучення недоступне в цьому браузері', 3000); logTTS('no speechSynthesis'); return; }
     pickVoice();
-    if (voicesLoaded && !koVoice) { voiceHelp(); return; }
-    const go = () => {
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ko-KR'; u.rate = rate || 0.85;
-      if (koVoice) u.voice = koVoice;
-      let started = false;
-      u.onstart = () => { started = true; };
-      u.onerror = e => { if (!/interrupted|canceled/.test(e.error || '')) toast('Не вдалося відтворити звук (' + (e.error || '?') + ')', 3000); };
-      liveUtterance = u;               // keep a reference so it is not garbage-collected mid-speech
-      TTS.resume();                    // Chrome sometimes stays "paused"
-      TTS.speak(u);
-      setTimeout(() => { if (!started && liveUtterance === u && !TTS.speaking) (koVoice ? toast(ios ? 'Звуку немає? Вимкни беззвучний режим і збільш гучність.' : 'Звуку немає? Перевір гучність.', 4000) : voiceHelp()); }, 2500);
-    };
-    if (TTS.speaking || TTS.pending) { TTS.cancel(); setTimeout(go, 150); } else go();
+    if (voicesLoaded && !koVoice) { logTTS('no Korean voice'); voiceHelp(); return; }
+    /* Everything below runs synchronously inside the tap — required by iOS Safari. */
+    if (TTS.speaking || TTS.pending) TTS.cancel();
+    if (!ios && TTS.paused) TTS.resume();      // Chrome can get stuck "paused"; resume() misbehaves on iOS
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR'; u.rate = rate || 0.85; u.volume = 1;
+    if (koVoice && (koVoice.localService || !ios)) u.voice = koVoice;
+    let started = false;
+    u.onstart = () => { started = true; logTTS('start'); };
+    u.onend = () => logTTS('end');
+    u.onerror = e => { logTTS('error ' + (e.error || '?')); if (!/interrupted|canceled/.test(e.error || '')) toast('Не вдалося відтворити звук (' + (e.error || '?') + '). Перезапусти браузер.', 4000); };
+    liveUtterance = u;                         // keep a reference so it is not garbage-collected mid-speech
+    TTS.speak(u);
+    logTTS('speak "' + text.slice(0, 12) + '" voice=' + (u.voice ? u.voice.name : 'auto'));
+    /* Chrome/Edge sometimes drop an utterance queued right after cancel(); retry once (not needed/allowed on iOS) */
+    if (!ios) setTimeout(() => { if (!started && liveUtterance === u && !TTS.speaking) { logTTS('retry'); TTS.cancel(); TTS.speak(u); } }, 700);
+    setTimeout(() => {
+      if (started || liveUtterance !== u) return;
+      logTTS('no start after 2.5s');
+      if (!koVoice) voiceHelp();
+      else toast(ios ? 'Звуку немає? Вимкни беззвучний режим (перемикач збоку) і збільш гучність.' : 'Звуку немає? Перевір гучність.', 5000);
+    }, 2500);
   }
-  window.KS = { speak, toast: (m, ms) => toast(m, ms) };
+  function ttsInfo() {
+    const vs = TTS ? TTS.getVoices() : [];
+    return {
+      supported: !!TTS, voices: vs.length,
+      korean: vs.filter(v => /^ko/i.test(v.lang || '')).map(v => `${v.name} (${v.lang}${v.localService ? '' : ', online'})`),
+      chosen: koVoice ? koVoice.name : '—', standalone: !!(window.matchMedia('(display-mode: standalone)').matches || navigator.standalone),
+      ua: navigator.userAgent, log: ttsLog.slice()
+    };
+  }
+  window.KS = { speak, toast: (m, ms) => toast(m, ms), ttsInfo };
   const sayBtn = text => `<button class="icon-btn" data-say="${esc(text)}" aria-label="Прослухати" title="Прослухати">🔊</button>`;
 
   /* ---------- icons ---------- */
@@ -621,6 +640,12 @@
         <div class="field"><label for="nm">Як до тебе звертатися</label><input type="text" id="nm" value="${esc(S.name)}" placeholder="율리아"></div>
         <button class="btn secondary" data-act="name">Зберегти</button>
       </div>
+      <div class="card" id="snd">
+        <h3>Перевірка звуку · 소리 진단</h3>
+        <p class="muted small">Якщо 🔊 не звучить: натисни «Тест», зачекай 3 секунди і надішли знімок цього блоку вчителю/розробнику.</p>
+        <div class="row" style="margin-bottom:12px"><button class="btn" data-act="snd-test">🔊 Тест «안녕하세요»</button><button class="btn secondary sm" data-act="snd-copy">Скопіювати звіт</button></div>
+        <pre class="small" id="snd-info" style="white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:0"></pre>
+      </div>
       <div class="card">
         <h3>Тема оформлення</h3>
         <div class="tabs" style="margin:0">${[['', 'Як у системі'], ['light', 'Світла'], ['dark', 'Темна']].map(([k, l]) => `<button data-theme-set="${k}" class="${(document.documentElement.dataset.theme || '') === k ? 'active' : ''}">${l}</button>`).join('')}</div>
@@ -639,7 +664,19 @@
       </div>
       <div class="card"><h3>Скинути все</h3><p class="muted small">Видаляє всі твої дані (словник, результати${isTeacher ? ', учнів і уроки' : ''}) — і в акаунті теж.</p><button class="btn danger" data-act="reset">Скинути дані</button></div>`;
   }
+  function drawSnd() {
+    const box = $('#snd-info'); if (!box) return;
+    const i = ttsInfo();
+    box.textContent = [
+      `Підтримка: ${i.supported ? 'так' : 'НІ'} · голосів: ${i.voices} · як додаток: ${i.standalone ? 'так' : 'ні'}`,
+      `Корейські голоси: ${i.korean.length ? i.korean.join(', ') : 'НЕМАЄ'}`,
+      `Обраний: ${i.chosen}`,
+      `Журнал: ${i.log.length ? i.log.join(' | ') : '—'}`,
+      i.ua
+    ].join('\n');
+  }
   Settings.after = function () {
+    drawSnd(); setTimeout(drawSnd, 1000);
     view.onclick = e => {
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.themeSet != null) {
@@ -649,6 +686,8 @@
         route(); return;
       }
       const act = t.dataset.act;
+      if (act === 'snd-test') { speak('안녕하세요'); drawSnd(); setTimeout(drawSnd, 3000); return; }
+      if (act === 'snd-copy') { const txt = $('#snd-info').textContent; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('Скопійовано'), () => toast('Не вдалося скопіювати')); return; }
       if (act === 'logout' && confirm('Вийти з акаунта на цьому пристрої?')) return window.KSAuth.logout();
       if (act === 'name') { S.name = $('#nm').value.trim(); save(); toast('Збережено'); }
       if (act === 'export') {
