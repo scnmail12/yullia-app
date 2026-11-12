@@ -1,5 +1,5 @@
 /* Offline support. Bump VERSION whenever app files change so phones pick up the update. */
-const VERSION = 'ks-v7';
+const VERSION = 'ks-v8';
 const SUPA_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js';
 const SHELL = [
   './', 'index.html', 'styles.css', 'config.js', 'auth.js', 'app.js', 'practice.js', SUPA_JS,

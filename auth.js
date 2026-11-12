@@ -99,11 +99,22 @@
       rows = JSON.parse(ls.get(CACHE_KEY) || 'null');
       if (!rows) throw e;
     }
-    const books = rows.filter(r => r.id.startsWith('book:')).sort((a, b) => a.id.localeCompare(b.id)).map(r => r.data);
+    return buildCourse(rows);
+  }
+  /* Rows: book:<id> (unit list only), unit:<id> (only the units this user may open), weekly (meta).
+     Units without a row become locked stubs so the course map still shows them. */
+  function buildCourse(rows) {
+    const units = {}; rows.filter(r => r.kind === 'unit' || r.id.startsWith('unit:')).forEach(r => { units[r.data.unit.id] = r.data; });
+    const books = rows.filter(r => r.id.startsWith('book:')).sort((a, b) => a.id.localeCompare(b.id)).map(r => {
+      const b = r.data;
+      /* m.grammar/m.vocab present = old per-book layout (full unit inside the book row) */
+      return Object.assign({}, b, { units: (b.units || []).map(m => units[m.id] ? units[m.id].unit : (m.grammar || m.vocab ? m : Object.assign({ locked: true }, m))) });
+    });
     window.COURSE_BOOKS = books;
-    window.PRACTICE = Object.assign({}, ...rows.filter(r => r.id.startsWith('practice:')).sort((a, b) => a.id.localeCompare(b.id)).map(r => r.data));
-    const w = rows.find(r => r.id === 'weekly');
-    window.WEEKLY = w ? w.data : { week: null, items: {} };
+    window.PRACTICE = {}; window.WEEKLY = { week: null, date: null, items: {} };
+    rows.filter(r => r.id.startsWith('practice:')).forEach(r => Object.assign(window.PRACTICE, r.data));   // old layout
+    const w = rows.find(r => r.id === 'weekly'); if (w) Object.assign(window.WEEKLY, w.data, { items: Object.assign({}, (w.data || {}).items) });
+    Object.keys(units).forEach(id => { window.PRACTICE[id] = units[id].practice || []; window.WEEKLY.items[id] = units[id].weekly || []; });
     return books.length;
   }
   async function loadState() {
@@ -166,13 +177,41 @@
     if (error) throw error;
   }
 
-  window.KSAuth = { push, logout, listProfiles, setStatus };
+  /* per-student access: scopes 'level:2', 'book:2a', 'unit:2a-03' */
+  async function listGrants() {
+    const { data, error } = await sb.from('grants').select('user_id,scope');
+    if (error) throw error; return data;
+  }
+  async function setGrant(userId, scope, on) {
+    const q = on ? sb.from('grants').upsert({ user_id: userId, scope }, { onConflict: 'user_id,scope', ignoreDuplicates: true })
+                 : sb.from('grants').delete().eq('user_id', userId).eq('scope', scope);
+    const { error } = await q; if (error) throw error;
+  }
+
+  window.KSAuth = { push, logout, listProfiles, setStatus, listGrants, setGrant };
 
   /* ---------- local developer mode (localhost + ?dev only): reads ./content/data, no login ---------- */
   async function devBoot() {
     const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src + '?' + Date.now(); s.onload = res; s.onerror = rej; document.body.appendChild(s); });
-    for (const f of ['1a', '1b', 'practice-1a', 'practice-1b', 'weekly']) await load('content/data/' + f + '.js');
+    const books = ['1a', '1b', '2a', '2b'];
+    for (const f of books.concat(books.map(b => 'practice-' + b), ['weekly'])) await load('content/data/' + f + '.js').catch(() => {});
     window.KS_USER = { id: 'dev', email: 'dev@localhost', name: 'Dev', role: 'teacher' };
+    /* ?dev&student → pretend to be a student who was granted only book 1a + unit 2a-01 */
+    if (/[?&]student\b/.test(location.search)) {
+      window.KS_USER.role = 'student';
+      const open = u => u.id.startsWith('1a') || u.id === '2a-01';
+      window.COURSE_BOOKS.forEach(b => { b.units = b.units.map(u => open(u) ? u : { id: u.id, no: u.no, title: u.title, titleUk: u.titleUk, locked: true }); });
+    }
+    /* ?dev&mock → fake teacher back-end so the access editor can be tried without Supabase */
+    if (/[?&]mock\b/.test(location.search)) {
+      const profiles = [
+        { id: 'dev', email: 'teacher@example.com', name: 'Юлія', role: 'teacher', status: 'approved', created_at: '2026-11-08' },
+        { id: 's1', email: 'maria@example.com', name: 'Марія', role: 'student', status: 'approved', created_at: '2026-11-10' },
+        { id: 's2', email: 'oleh@example.com', name: 'Олег', role: 'student', status: 'pending', created_at: '2026-11-12' }];
+      let grants = [{ user_id: 's1', scope: 'level:1' }, { user_id: 's1', scope: 'unit:2a-01' }];
+      window.KSAuth = { push() {}, logout() {}, async listProfiles() { return profiles.slice(); }, async setStatus(id, s) { profiles.find(p => p.id === id).status = s; },
+        async listGrants() { return grants.slice(); }, async setGrant(uid, scope, on) { grants = grants.filter(g => !(g.user_id === uid && g.scope === scope)); if (on) grants.push({ user_id: uid, scope }); } };
+    }
     gate.hidden = true; app.hidden = false; tabbar.hidden = false; document.getElementById('gear-fab').hidden = false;
     await load('practice.js'); await load('app.js');
   }

@@ -334,6 +334,19 @@ details.lesson > div { padding-top: 12px; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 @media (min-width: 861px) { .toast { bottom: 28px; } }
 
+/* locked units & teacher grant editor */
+.unit-item.locked { opacity: .55; box-shadow: none; cursor: default; }
+.unit-item.locked:hover { transform: none; }
+.grant-panel { margin: 0 0 12px 56px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg); }
+.grant-level + .grant-level { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.grant-book { margin: 8px 0 0 18px; }
+.grant-units { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 12px; margin: 4px 0 0 18px; }
+.gchk { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 14.5px; cursor: pointer; }
+.gchk input { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; }
+.gchk.dis { opacity: .6; cursor: default; }
+.gchk .muted { font-size: 13px; }
+@media (max-width: 600px) { .grant-panel { margin-left: 0; } .grant-book, .grant-units { margin-left: 8px; } }
+
 /* settings shortcut (phones: settings is not in the tab bar) */
 .gear-fab { display: none; }
 @media (max-width: 860px) {

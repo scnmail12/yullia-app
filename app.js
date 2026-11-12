@@ -5,10 +5,13 @@
   const BOOKS = window.COURSE_BOOKS || [];
   const UNITS = BOOKS.flatMap(b => b.units.map(u => Object.assign({ book: b.id }, u)));
   const unitById = id => UNITS.find(u => u.id === id);
+  /* units the teacher has opened for this student (locked ones arrive as title-only stubs) */
+  const OPEN = UNITS.filter(u => !u.locked);
+  const OPEN_BOOKS = BOOKS.filter(b => b.units.some(u => !u.locked));
 
   /* ---------- storage ---------- */
   const KEY = 'korean-studio-v1';
-  const defaults = () => ({ words: [], students: [], lessons: [], done: {}, scores: {}, current: UNITS[0] ? UNITS[0].id : null, name: '' });
+  const defaults = () => ({ words: [], students: [], lessons: [], done: {}, scores: {}, current: OPEN[0] ? OPEN[0].id : null, name: '' });
   let S = load();
   function load() {
     try {
@@ -134,7 +137,7 @@
   };
   const NAV = [
     ['home', '나의 공간', 'Головна', I.home, 'Головна'],
-    ['course', '코스', 'Курс 1A–1B', I.book, 'Курс'],
+    ['course', '코스', 'Курс ' + BOOKS.map(b => b.title).join(' · '), I.book, 'Курс'],
     ['grammar', '문법 노트', 'Граматика', I.gram, 'Граматика'],
     ['words', '단어장', 'Мій словник', I.words, 'Словник'],
     ['studio', '스튜디오', 'Учні та уроки', I.studio, 'Учні'],
@@ -162,8 +165,9 @@
 
   /* ---------- Home ---------- */
   function Home() {
-    const cur = unitById(S.current) || UNITS[0];
-    const doneCount = Object.keys(S.done).filter(k => S.done[k]).length;
+    const c0 = unitById(S.current);
+    const cur = c0 && !c0.locked ? c0 : OPEN[0];
+    const doneCount = OPEN.filter(u => S.done[u.id]).length;
     const learned = S.words.filter(w => w.learned).length;
     const nm = S.name || ME.name;
     const hello = nm ? `안녕하세요, ${esc(nm)}!` : '안녕하세요!';
@@ -194,11 +198,11 @@
           <div class="title ko">${cur.no ? unitLabel(cur) + ' ' : ''}${esc(cur.title)}</div>
           <div class="muted">${esc(cur.titleUk)}</div>
           <div class="row" style="margin-top:10px">${(cur.grammar || []).slice(0, 4).map(g => `<span class="chip ko">${esc(g.p)}</span>`).join('')}</div>
-        </a>` : ''}
+        </a>` : `<div class="hero-card"><div class="title">🔒 Розділи ще не відкриті</div><div class="muted">Вчитель відкриє тобі потрібні розділи курсу — тоді вони з’являться тут.</div></div>`}
       </section>
       ${install}
       <div class="grid">
-        <a class="tile" href="#/course"><div class="num">${doneCount}/${UNITS.length}</div><div class="label">Пройдено розділів</div><div class="muted small">Курс 1A + 1B</div></a>
+        <a class="tile" href="#/course"><div class="num">${doneCount}/${OPEN.length}</div><div class="label">Пройдено розділів</div><div class="muted small">Курс ${OPEN_BOOKS.map(b => b.title).join(" · ") || '—'}</div></a>
         <a class="tile" href="#/words"><div class="num">${S.words.length}</div><div class="label">Слів у словнику</div><div class="muted small">${learned} вивчено</div></a>
         <a class="tile" href="#/grammar"><div class="num">${UNITS.reduce((n, u) => n + (u.grammar || []).length, 0)}</div><div class="label">Граматик у зошиті</div><div class="muted small">з поясненнями українською</div></a>
         ${isTeacher ? `<a class="tile" href="#/studio"><div class="num">${S.students.length}</div><div class="label">Учнів</div><div class="muted small">${S.lessons.length} записів уроків</div></a>` : ''}
@@ -218,18 +222,25 @@
   };
 
   /* ---------- Course ---------- */
-  let courseBook = BOOKS[0] ? BOOKS[0].id : '1a';
+  /* students see only books that have at least one opened unit; the teacher sees all */
+  const SHOWN_BOOKS = isTeacher ? BOOKS : OPEN_BOOKS;
+  let courseBook = SHOWN_BOOKS[0] ? SHOWN_BOOKS[0].id : '1a';
   function Course(book) {
     if (book) courseBook = book;
-    const b = BOOKS.find(x => x.id === courseBook) || BOOKS[0];
-    if (!b) return '<div class="empty">Курс ще не завантажено.</div>';
+    const b = SHOWN_BOOKS.find(x => x.id === courseBook) || SHOWN_BOOKS[0];
+    if (!b) return '<div class="empty">🔒 Вчитель ще не відкрив тобі розділи курсу.</div>';
     return `
       <div class="eyebrow">서울대 한국어</div>
-      <h1>Курс першого рівня</h1>
+      <h1>${b.id.charAt(0)}급 · ${b.id.charAt(0) === "1" ? "Початковий рівень" : "Базове спілкування"}</h1>
       <p class="lead">Послідовність тем і граматики — за 교재 구성표 підручника. Пояснення та вправи — авторські.</p>
-      <div class="tabs">${BOOKS.map(x => `<button data-book="${x.id}" class="${x.id === b.id ? 'active' : ''}">${esc(x.title)}</button>`).join('')}</div>
+      <div class="tabs">${SHOWN_BOOKS.map(x => `<button data-book="${x.id}" class="${x.id === b.id ? 'active' : ''}">${esc(x.title)}</button>`).join('')}</div>
       <p class="muted">${esc(b.subtitle)}</p>
-      <div class="unit-list">${b.units.map(u => `
+      <div class="unit-list">${b.units.map(u => u.locked ? `
+        <div class="unit-item locked" title="Відкриє вчитель">
+          <div class="unit-num ko">${u.no === 0 ? '한' : String(u.no).padStart(2, '0')}</div>
+          <div class="grow"><div class="t ko">${esc(u.title)}</div><div class="s">${esc(u.titleUk)}</div></div>
+          <span class="chip">🔒</span>
+        </div>` : `
         <a class="unit-item ${S.done[u.id] ? 'done' : ''}" href="#/unit/${u.id}">
           <div class="unit-num ko">${u.no === 0 ? '한' : String(u.no).padStart(2, '0')}</div>
           <div class="grow">
@@ -245,13 +256,14 @@
   function Unit(id) {
     const u = unitById(id);
     if (!u) return '<div class="empty">Розділ не знайдено. <a href="#/course">До курсу</a></div>';
-    const idx = UNITS.indexOf(u);
-    const prev = UNITS[idx - 1], next = UNITS[idx + 1];
+    if (u.locked) return `<div class="empty">🔒 <b class="ko">${esc(u.title)}</b><br>Цей розділ відкриє вчитель.<br><br><a class="btn secondary" href="#/course">До курсу</a></div>`;
+    const idx = OPEN.indexOf(OPEN.find(x => x.id === u.id));
+    const prev = OPEN[idx - 1], next = OPEN[idx + 1];
     const inDict = ko => S.words.some(w => w.ko === ko);
     return `
       <a class="back" href="#/course/${u.book}">← ${u.book.toUpperCase()}</a>
       <section class="hero unit-hero" data-glyph="${esc(u.title.charAt(0))}">
-        <div class="issue"><strong>${u.no === 0 ? '00' : String(u.no).padStart(2, '0')}</strong>/ ${UNITS.length - 1} · 서울대 한국어 ${u.book.toUpperCase()}</div>
+        <div class="issue"><strong>${u.no === 0 ? '00' : String(u.no).padStart(2, '0')}</strong>/ ${Math.max(...UNITS.filter(x => x.book.charAt(0) === u.book.charAt(0)).map(x => x.no))} · 서울대 한국어 ${u.book.toUpperCase()}</div>
         <h1 class="ko">${esc(u.title)}</h1>
         <p class="lead" style="margin:0">${esc(u.titleUk)}</p>
       </section>
@@ -437,7 +449,7 @@
     return `
       <div class="eyebrow">문법 노트</div>
       <h1>Граматичний зошит</h1>
-      <p class="lead">Усі граматики 1A–1B з поясненнями та прикладами.</p>
+      <p class="lead">Усі граматики ${BOOKS.map(b => b.title).join(" · ")} з поясненнями та прикладами.</p>
       <div class="field"><input type="search" id="gq" placeholder="Пошук: 이에요, минулий час, -고…" value="${esc(gramQuery)}"></div>
       <div id="gram-list">${gramList()}</div>`;
   }
@@ -564,35 +576,83 @@
       <p class="muted small">Журнал синхронізується з твоїм акаунтом.</p>`;
   }
   const STATUS = { pending: ['Очікує', 'todo'], approved: ['Має доступ', 'ok'], blocked: ['Заблоковано', ''] };
+  /* ---- per-student course access: level (급) / book / unit ---- */
+  const LEVELS = [...new Set(BOOKS.map(b => b.id.charAt(0)))];
+  const openGrantPanels = new Set();
+  let grantCache = [];
+  function grantSummary(scopes) {
+    if (!scopes.size) return '<span class="muted">розділи ще не відкриті</span>';
+    const parts = [];
+    LEVELS.forEach(L => {
+      if (scopes.has('level:' + L)) { parts.push(`${L}급`); return; }
+      BOOKS.filter(b => b.id.charAt(0) === L).forEach(b => {
+        if (scopes.has('book:' + b.id)) parts.push(b.title);
+        else { const n = b.units.filter(u => scopes.has('unit:' + u.id)).length; if (n) parts.push(`${b.title}: ${n} розд.`); }
+      });
+    });
+    return 'Відкрито: ' + parts.join(' · ');
+  }
+  function grantPanel(p, scopes) {
+    const cb = (scope, label, checked, disabled, cls) => `<label class="gchk ${cls || ''}${disabled ? ' dis' : ''}"><input type="checkbox" data-grant="${scope}" data-uid="${p.id}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}> <span class="ko">${label}</span></label>`;
+    return `<div class="grant-panel">${LEVELS.map(L => {
+      const lv = scopes.has('level:' + L);
+      return `<div class="grant-level">${cb('level:' + L, `<b>Увесь ${L}급</b>`, lv, false, 'lvl')}
+        ${BOOKS.filter(b => b.id.charAt(0) === L).map(b => {
+          const bk = lv || scopes.has('book:' + b.id);
+          return `<div class="grant-book">${cb('book:' + b.id, `<b>Уся книга ${esc(b.title)}</b>`, bk, lv, 'bk')}
+            <div class="grant-units">${b.units.map(u => cb('unit:' + u.id, `${u.no === 0 ? '한글' : u.no + '과'} <span class="muted">${esc(u.title)}</span>`, bk || scopes.has('unit:' + u.id), bk)).join('')}</div></div>`;
+        }).join('')}</div>`;
+    }).join('')}</div>`;
+  }
   async function drawAccess() {
     const box = $('#access'); if (!box) return;
     try {
-      const list = await window.KSAuth.listProfiles();
+      const [list, grants] = await Promise.all([window.KSAuth.listProfiles(), window.KSAuth.listGrants()]);
+      grantCache = grants;
       const order = { pending: 0, approved: 1, blocked: 2 };
       list.sort((a, b) => order[a.status] - order[b.status]);
       const pend = list.filter(p => p.status === 'pending').length;
-      box.innerHTML = `${pend ? `<div class="note" style="margin-bottom:8px">Нових запитів: <b>${pend}</b></div>` : ''}<div class="list">${list.map(p => `
-        <div class="list-item">
+      box.innerHTML = `${pend ? `<div class="note" style="margin-bottom:8px">Нових запитів: <b>${pend}</b></div>` : ''}<div class="list">${list.map(p => {
+        const scopes = new Set(grants.filter(g => g.user_id === p.id).map(g => g.scope));
+        const isStudent = p.id !== ME.id && p.role !== 'teacher';
+        return `
+        <div class="list-item acc-item">
           <div class="avatar">${esc((p.name || p.email || '?').slice(0, 1).toUpperCase())}</div>
           <div class="grow"><div style="font-weight:700">${esc(p.name || '—')}${p.role === 'teacher' ? ' <span class="chip">вчитель</span>' : ''}</div>
-            <div class="muted small">${esc(p.email)} · ${fmtDate(String(p.created_at).slice(0, 10))}</div></div>
+            <div class="muted small">${esc(p.email)} · ${fmtDate(String(p.created_at).slice(0, 10))}</div>
+            ${isStudent && p.status === 'approved' ? `<div class="small" style="margin-top:4px">${grantSummary(scopes)}</div>` : ''}</div>
           ${p.id === ME.id ? '' : `<div class="row" style="gap:6px;justify-content:flex-end">
             <span class="chip ${STATUS[p.status][1]}">${STATUS[p.status][0]}</span>
+            ${isStudent && p.status === 'approved' ? `<button class="btn sm secondary" data-gp="${p.id}">${openGrantPanels.has(p.id) ? 'Сховати' : 'Розділи'}</button>` : ''}
             ${p.status !== 'approved' ? `<button class="btn sm" data-acc="approved" data-id="${p.id}">Схвалити</button>` : ''}
             ${p.status !== 'blocked' ? `<button class="btn sm danger" data-acc="blocked" data-id="${p.id}">${p.status === 'pending' ? 'Відхилити' : 'Заблокувати'}</button>` : ''}
           </div>`}
-        </div>`).join('')}</div>
-        <p class="muted small" style="margin:12px 0 0">Надішли учням посилання на додаток: вони реєструються, а ти схвалюєш їх тут.</p>`;
+        </div>
+        ${isStudent && p.status === 'approved' && openGrantPanels.has(p.id) ? grantPanel(p, scopes) : ''}`;
+      }).join('')}</div>
+        <p class="muted small" style="margin:12px 0 0">Учні реєструються за посиланням → ти натискаєш «Схвалити» → у «Розділи» відкриваєш рівень, книгу або окремі розділи. Учень бачить лише відкриті розділи.</p>`;
     } catch (e) { box.innerHTML = '<div class="empty">Не вдалося завантажити список. Перевір інтернет.</div>'; }
   }
   Studio.after = function () {
     if (window.KSAuth) {
       drawAccess();
       $('#access').addEventListener('click', async e => {
+        const gp = e.target.closest('[data-gp]');
+        if (gp) { const id = gp.dataset.gp; openGrantPanels.has(id) ? openGrantPanels.delete(id) : openGrantPanels.add(id); return drawAccess(); }
         const b = e.target.closest('[data-acc]'); if (!b) return;
         if (b.dataset.acc === 'blocked' && !confirm('Закрити доступ цьому користувачу?')) return;
         b.disabled = true;
-        try { await window.KSAuth.setStatus(b.dataset.id, b.dataset.acc); toast(b.dataset.acc === 'approved' ? 'Доступ надано' : 'Доступ закрито'); }
+        try {
+          await window.KSAuth.setStatus(b.dataset.id, b.dataset.acc);
+          if (b.dataset.acc === 'approved') { openGrantPanels.add(b.dataset.id); toast('Доступ надано — тепер обери розділи', 3000); }
+          else toast('Доступ закрито');
+        } catch (err) { toast('Помилка: ' + err.message); }
+        drawAccess();
+      });
+      $('#access').addEventListener('change', async e => {
+        const c = e.target.closest('[data-grant]'); if (!c) return;
+        c.disabled = true;
+        try { await window.KSAuth.setGrant(c.dataset.uid, c.dataset.grant, c.checked); toast(c.checked ? 'Відкрито' : 'Закрито'); }
         catch (err) { toast('Помилка: ' + err.message); }
         drawAccess();
       });
