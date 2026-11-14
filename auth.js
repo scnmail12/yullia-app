@@ -194,7 +194,7 @@
   async function devBoot() {
     const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src + '?' + Date.now(); s.onload = res; s.onerror = rej; document.body.appendChild(s); });
     const books = ['1a', '1b', '2a', '2b', 'topik1'];
-    const extra = ['practice-topik1r', 'practice-topik1x'];
+    const extra = ['practice-topik1x'];
     for (const f of books.concat(books.map(b => 'practice-' + b), extra, ['weekly'])) await load('content/data/' + f + '.js').catch(() => {});
     window.KS_USER = { id: 'dev', email: 'dev@localhost', name: 'Dev', role: 'teacher' };
     /* ?dev&student → pretend to be a student who was granted only book 1a + unit 2a-01 */

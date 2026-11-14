@@ -296,6 +296,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 /* TOPIK: notices/ads, question numbers, strategy tips, mock-exam bar */
 .passage.notice { background: var(--surface); border: 2px solid var(--border-strong); border-radius: 6px; text-align: center; line-height: 1.7; }
 .chip.qn { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+/* TOPIK exams: answer sheet (OMR), results, exam mode for the app's own test */
+.exam-grade { margin-top: 10px; font-size: 1.05rem; }
+.exam-steps { margin: 8px 0 0; padding-left: 1.2em; list-style: decimal; }
+.exam-steps li { margin: 4px 0; }
+#exam-clock.late { color: var(--err); }
+.omr { padding: 14px; }
+.omr-h { margin: 6px 0 10px; font-size: 1rem; }
+.omr-h:not(:first-child) { margin-top: 20px; }
+.omr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 6px 14px; }
+.omr-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 10px; }
+.omr-row.bad { background: var(--err-bg); }
+.omr-n { width: 28px; font: 700 14px var(--sans); color: var(--text-2); text-align: right; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.omr-b { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid var(--border-strong); background: var(--surface); color: var(--text-2); font-size: 18px; line-height: 1; padding: 0; cursor: pointer; }
+.omr-b.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.omr-b.key { background: var(--accent-fill); color: var(--on-accent); border-color: var(--accent-fill); }
+.omr-b.miss { background: var(--err); color: #fff; border-color: var(--err); }
+.omr-b:disabled { cursor: default; opacity: 1; }
+.exam-mode .p-foot, .exam-mode .p-show, .exam-mode .p-score, .exam-mode .chip.ok, .exam-mode .chip.todo { display: none !important; }
 ul.tips { margin: 10px 0 0; }
 ul.tips li { padding-left: 1.4em; position: relative; margin: 6px 0; }
 ul.tips li::before { content: '💡'; position: absolute; left: 0; font-size: .9em; }

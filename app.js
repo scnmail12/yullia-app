@@ -47,7 +47,7 @@
   const isTopikUnit = u => /^topik/.test(u.id);
   const bookShort = id => bookById(id).title;
   const bookSource = id => isTopik(id) ? bookShort(id) : '서울대 한국어 ' + bookShort(id);
-  const unitLabel = u => u.no === 0 ? '한글' : isTopikUnit(u) ? (u.exam || /모의고사/.test(u.title) ? '모의고사' : '유형 ' + u.no) : u.no + '과';
+  const unitLabel = u => u.no === 0 ? '한글' : isTopikUnit(u) ? u.title : u.no + '과';
   const fullLabel = u => u.no === 0 || isTopikUnit(u) ? esc(u.title) : u.no + '과 ' + esc(u.title);
   /* answer comparison: same rules as practice.js */
   const norm = s => String(s || '').normalize('NFC').replace(/[\s.?!,~·…'"’‘“”«»()[\]{}​-‍﻿]/g, '').toLowerCase();
@@ -255,8 +255,8 @@
     if (!b) return '<div class="empty">🔒 Вчитель ще не відкрив тобі розділи курсу.</div>';
     return `
       ${isTopik(b.id) ? `<div class="eyebrow">한국어능력시험</div>
-      <h1>${esc(b.title)} · Підготовка до іспиту</h1>
-      <p class="lead">Усі типи завдань TOPIK I (듣기 1–30, 읽기 31–70) зі стратегіями та пробний іспит. Завдання авторські, у форматі іспиту.</p>` : `<div class="eyebrow">서울대 한국어</div>
+      <h1>${esc(b.title)} · Іспити</h1>
+      <p class="lead">Справжні тести TOPIK I минулих років — як на іспиті: таймер, бланк відповідей, бали й рівень. Аркуші завдань відкриваються на офіційному сайті TOPIK.</p>` : `<div class="eyebrow">서울대 한국어</div>
       <h1>${levelOf(b.id)}급 · ${levelOf(b.id) === "1" ? "Початковий рівень" : "Базове спілкування"}</h1>
       <p class="lead">Послідовність тем і граматики — за 교재 구성표 підручника. Пояснення та вправи — авторські.</p>`}
       <div class="tabs">${SHOWN_BOOKS.map(x => `<button data-book="${x.id}" class="${x.id === b.id ? 'active' : ''}">${esc(x.title)}</button>`).join('')}</div>
@@ -271,18 +271,28 @@
           <div class="unit-num ko">${u.no === 0 ? '한' : String(u.no).padStart(2, '0')}</div>
           <div class="grow">
             <div class="t ko">${esc(u.title)}</div>
-            <div class="s">${esc(u.titleUk)}${isTopikUnit(u) ? ((window.PRACTICE || {})[u.id] || []).length ? ' · завдань ' + window.PRACTICE[u.id].length : '' : u.grammar ? ' · 문법 ' + u.grammar.length : ''}</div>
+            <div class="s">${esc(u.titleUk)}${!isTopikUnit(u) && u.grammar ? ' · 문법 ' + u.grammar.length : ''}</div>
           </div>
+          ${isTopikUnit(u) ? topikChip(u) : ''}
           ${S.done[u.id] ? '<span class="seal ko" title="Завершено">완</span>' : (S.current === u.id ? '<span class="chip">зараз</span>' : '')}
         </a>`).join('')}
       </div>`;
   }
 
   /* ---------- Unit ---------- */
+  /* last TOPIK result on the course map */
+  function topikChip(u) {
+    const h = u.paper ? ((S.omr || {})[u.id] || {}).hist : null;
+    if (h && h.length) { const t = h[h.length - 1].total; return `<span class="chip ${t >= 80 ? 'ok' : 'todo'}">${t} / 200</span>`; }
+    if (u.exam && (S.examDone || {})[u.id]) { const r = examScore(u); return `<span class="chip ${r.ls + r.rd >= 80 ? 'ok' : 'todo'}">${r.ls + r.rd} / 200</span>`; }
+    return '';
+  }
   function Unit(id) {
     const u = unitById(id);
     if (!u) return '<div class="empty">Розділ не знайдено. <a href="#/course">До курсу</a></div>';
     if (u.locked) return `<div class="empty">🔒 <b class="ko">${esc(u.title)}</b><br>Цей розділ відкриє вчитель.<br><br><a class="btn secondary" href="#/course">До курсу</a></div>`;
+    if (u.paper) return PaperUnit(u);
+    if (u.exam) return MockUnit(u);
     const idx = OPEN.indexOf(OPEN.find(x => x.id === u.id));
     const prev = OPEN[idx - 1], next = OPEN[idx + 1];
     const inDict = ko => S.words.some(w => w.ko === ko);
@@ -310,8 +320,6 @@
         ${u.goals ? `<h3 style="margin-top:16px">Після розділу учень уміє</h3><ul class="plain">${u.goals.map(g => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
       </div>
 
-      ${u.types && u.types.length ? `<div class="section"><h2>유형 · Типи завдань</h2>${u.types.map(typeCard).join('')}</div>` : ''}
-
       ${u.vocab && u.vocab.length ? `
       <div class="section"><div class="spread"><h2>어휘 · Лексика</h2><button class="btn sm secondary" data-act="add-all">+ Усі в словник</button></div>
         <div class="card"><table class="vocab">${u.vocab.map((v, i) => `
@@ -330,7 +338,6 @@
           <div class="row" style="margin-top:16px"><button class="btn" data-act="check">Перевірити</button><button class="btn secondary" data-act="reset-ex">Заново</button><span id="ex-score" class="score"></span></div>
         </div></div>` : ''}
 
-      ${u.exam ? '<div class="section" id="exam"></div>' : ''}
       <div class="section" id="weekly"></div>
       <div class="section" id="practice"></div>
 
@@ -346,7 +353,9 @@
   Unit.after = function (id) {
     const u = unitById(decodeURIComponent(id || ''));
     if (!u) return;
+    if (u.paper) { view.onclick = null; return mountPaper(u); }
     mountPractice(u);
+    if (u.exam) { view.onclick = null; return; }
     view.onclick = e => {
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.say) return speak(t.dataset.say);
@@ -388,8 +397,8 @@
     if (filter) practiceFilter = filter;
     const topik = isTopikUnit(u);
     mountSet('#practice', (window.PRACTICE || {})[u.id], u.id, topik ? {
-      noFilter: true, title: u.exam ? '모의고사 · Пробний іспит' : '연습실 · Практика',
-      note: u.exam ? 'Повний тест у форматі TOPIK I: 듣기 1–30, 읽기 31–70. Питання авторські.' : 'Завдання у форматі TOPIK I (номери як на іспиті). Питання авторські.',
+      noFilter: true, title: u.exam ? '시험지 · Аркуш завдань' : '연습실 · Практика',
+      note: u.exam ? 'Авторський тест у форматі TOPIK I.' : 'Завдання у форматі TOPIK I.',
       onScore: u.exam ? () => mountExam(u) : null
     } : {}, f => mountPractice(u, f));
     if (u.exam) mountExam(u);
@@ -413,71 +422,173 @@
     window.Practice.bind(box, items, key, pStore, f => { const y = window.scrollY; redraw(f); window.scrollTo(0, y); }, dStore, opts.onScore);
   }
 
-  /* TOPIK question-type card: what it tests + strategy */
-  function typeCard(t) {
-    return `<div class="card gram">
-      <div class="spread"><div class="pattern ko">${esc(t.ko)}</div>${t.n ? `<span class="chip">№ ${esc(t.n)}</span>` : ''}</div>
-      ${t.uk ? `<p>${esc(t.uk)}</p>` : ''}
-      ${t.ex ? `<div class="bogi"><span class="bogi-tag ko">예</span><span class="ko">${esc(t.ex[0])}</span>${t.ex[1] ? `<span class="muted small">— ${esc(t.ex[1])}</span>` : ''}</div>` : ''}
-      ${t.tips && t.tips.length ? `<ul class="plain tips">${t.tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    </div>`;
+  /* ===== TOPIK I exams =====
+     Official past papers: the question sheets open on topik.go.kr (© 국립국제교육원); the app keeps only
+     the answer key + points (data/topik1.js) and gives an answer sheet (OMR), a timer and the score.
+     The app's own mock test (u.exam) runs in exam mode: no checking until the whole test is handed in. */
+  const TOPIK_URL = (round, part) => `https://www.topik.go.kr/TWSTDY/TWSTDY0090.do?sNo=${round}&sGrade=1&sType=${part}`;
+  const topikGrade = total => total >= 140 ? '2급' : total >= 80 ? '1급' : 'рівень не отримано';
+  const fmtClock = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  let examTimer = null;
+  function runClock(st, L, R) {
+    clearInterval(examTimer);
+    if (!st) return;
+    const tick = () => {
+      const c = $('#exam-clock'); if (!c) return clearInterval(examTimer);
+      const gone = Math.floor((Date.now() - st) / 1000), left = Math.max(0, (L + R) * 60 - gone);
+      c.textContent = left ? `${gone < L * 60 ? '듣기' : '읽기'} · ${fmtClock(left)}` : 'Час вийшов';
+      c.classList.toggle('late', left < 300);
+      if (!left) clearInterval(examTimer);
+    };
+    tick(); examTimer = setInterval(tick, 1000);
+  }
+  const resultBoxes = (ls, rd, extra) => `<div class="exam-res">
+      <div><div class="muted small">듣기</div><b>${ls}</b><span class="muted small"> / 100</span></div>
+      <div><div class="muted small">읽기</div><b>${rd}</b><span class="muted small"> / 100</span></div>
+      <div><div class="muted small">Разом</div><b>${ls + rd}</b><span class="muted small"> / 200</span></div>
+    </div><div class="exam-grade">${ls + rd >= 80 ? '🎉 ' : ''}<b class="ko">${topikGrade(ls + rd)}</b>${extra ? ' · ' + extra : ''}</div>`;
+
+  /* ---- official past paper ---- */
+  function PaperUnit(u) {
+    const p = u.paper;
+    return `
+      <a class="back" href="#/course/${u.book}">← ${esc(bookShort(u.book))}</a>
+      <section class="hero unit-hero" data-glyph="${p.round}">
+        <div class="issue">TOPIK I · ${p.year} · офіційний тест</div>
+        <h1 class="ko">제${p.round}회 한국어능력시험</h1>
+        <p class="lead" style="margin:0">TOPIK I · 듣기 40분 (1–30) · 읽기 60분 (31–70)</p>
+      </section>
+      <div id="paper"></div>`;
+  }
+  function paperState(u) { S.omr = S.omr || {}; return S.omr[u.id] = S.omr[u.id] || { ans: {}, hist: [] }; }
+  function paperScore(u, ans) {
+    const p = u.paper; let ls = 0, rd = 0; const wrong = [];
+    for (let q = 1; q <= 70; q++) {
+      const ok = +ans[q] === +p.key[q - 1];
+      if (ok) { if (q <= 30) ls += +p.pts[q - 1]; else rd += +p.pts[q - 1]; } else wrong.push(q);
+    }
+    return { ls, rd, total: ls + rd, wrong };
+  }
+  function mountPaper(u) {
+    const box = $('#paper', view); if (!box) return;
+    const p = u.paper, st = paperState(u), done = st.done;
+    const bubble = q => {
+      const mine = +st.ans[q] || 0, key = +p.key[q - 1];
+      return `<div class="omr-row${done ? (mine === key ? ' ok' : ' bad') : ''}"><span class="omr-n">${q}</span>${[1, 2, 3, 4].map(k => {
+        const cls = done ? (k === key ? ' key' : k === mine ? ' miss' : '') : (k === mine ? ' on' : '');
+        return `<button class="omr-b${cls}" data-q="${q}" data-k="${k}" ${done ? 'disabled' : ''} aria-label="${q} — ${k}">${'①②③④'[k - 1]}</button>`;
+      }).join('')}</div>`;
+    };
+    const part = (from, to) => { let h = ''; for (let q = from; q <= to; q++) h += bubble(q); return h; };
+    const answered = Object.keys(st.ans).length;
+    const r = done ? paperScore(u, st.ans) : null;
+    box.innerHTML = `
+      ${done ? `<div class="card exam-bar"><h2 style="margin:0 0 4px">Результат</h2>
+        ${resultBoxes(r.ls, r.rd, `правильних ${70 - r.wrong.length} з 70`)}
+        ${r.wrong.length ? `<p class="small" style="margin:10px 0 0">Помилки: ${r.wrong.join(', ')}. Правильна відповідь у бланку — синя, твоя — червона.</p>` : ''}
+        ${st.hist.length > 1 ? `<p class="muted small" style="margin:8px 0 0">Спроби: ${st.hist.map(h => `${fmtDate(h.at)} — <b>${h.total}</b>`).join(' · ')}</p>` : ''}
+        <div class="row" style="margin-top:12px"><button class="btn sm" data-paper="again">Пройти ще раз</button></div></div>`
+      : `<div class="card exam-bar">
+        <div class="spread"><h2 style="margin:0">⏱ Іспит</h2><span class="score" id="exam-clock">${st.start ? '' : '100:00'}</span></div>
+        <ol class="plain exam-steps small">
+          <li>Натисни «Почати» — піде час: 40 хв 듣기, потім 60 хв 읽기.</li>
+          <li>Відкрий аркуш завдань на офіційному сайті TOPIK і натисни там <b class="ko">시험 시작하기</b> (у 듣기 звук запуститься сам).</li>
+          <li>Відповіді відмічай тут, у бланку. Наприкінці натисни «Здати бланк».</li>
+        </ol>
+        <div class="row" style="margin-top:10px">
+          ${st.start ? '' : '<button class="btn sm" data-paper="start">Почати</button>'}
+          <a class="btn sm secondary" href="${TOPIK_URL(p.round, 'h')}" target="_blank" rel="noopener">🎧 Аркуш 듣기 1–30</a>
+          <a class="btn sm secondary" href="${TOPIK_URL(p.round, 'r')}" target="_blank" rel="noopener">📖 Аркуш 읽기 31–70</a>
+        </div>
+        <p class="muted small" style="margin:10px 0 0">Завдання — на topik.go.kr (© 국립국제교육원). Застосунок зберігає лише твої відповіді й бали.</p></div>`}
+      <div class="section"><div class="spread"><h2>답안지 · Бланк відповідей</h2>${done ? '' : `<span class="muted small">Відмічено: <b>${answered}</b>/70</span>`}</div>
+        <div class="card omr"><h3 class="omr-h">듣기 1–30</h3><div class="omr-grid">${part(1, 30)}</div>
+          <h3 class="omr-h">읽기 31–70</h3><div class="omr-grid">${part(31, 70)}</div></div>
+        ${done ? '' : '<div class="row" style="margin-top:12px"><button class="btn" data-paper="submit">Здати бланк</button></div>'}
+      </div>`;
+    box.onclick = e => {
+      const b = e.target.closest('button'); if (!b) return;
+      e.stopPropagation();
+      if (b.dataset.q) {
+        const q = b.dataset.q;
+        if (+st.ans[q] === +b.dataset.k) delete st.ans[q]; else st.ans[q] = +b.dataset.k;
+        save();
+        b.parentNode.querySelectorAll('.omr-b').forEach(x => x.classList.toggle('on', +st.ans[q] === +x.dataset.k));
+        const c = box.querySelector('.spread .muted b'); if (c) c.textContent = Object.keys(st.ans).length;
+        return;
+      }
+      const act = b.dataset.paper;
+      if (act === 'start') { st.start = Date.now(); save(); mountPaper(u); }
+      if (act === 'submit') {
+        const left = 70 - Object.keys(st.ans).length;
+        if (left && !confirm(`Без відповіді ще ${left} питань. Здати бланк?`)) return;
+        const s = paperScore(u, st.ans);
+        st.done = Date.now(); st.hist.push({ at: today(), ls: s.ls, rd: s.rd, total: s.total });
+        save(); mountPaper(u); window.scrollTo(0, 0);
+      }
+      if (act === 'again') { st.ans = {}; delete st.done; delete st.start; save(); mountPaper(u); window.scrollTo(0, 0); }
+    };
+    if (!done) runClock(st.start, 40, 60); else clearInterval(examTimer);
   }
 
-  /* 모의고사: timer + estimated TOPIK I score from the answers checked so far.
-     Score ≈ share of correct answers × 100 per section (the real test weights items 2–4 points). */
-  let examTimer = null;
+  /* ---- the app's own mock test (practice items, exam mode) ---- */
   function examScore(u) {
     const items = (window.PRACTICE || {})[u.id] || [], res = (S.pres || {})[u.id] || {};
-    const sec = { ls: [0, 0, 0], rd: [0, 0, 0] };            // right, answered, total questions
+    const sec = { ls: [0, 0], rd: [0, 0] };            // right, total questions
     items.forEach((it, i) => {
       if (it.t === 'wr') return;
       const nq = it.qs ? it.qs.length : 1, x = sec[it.t === 'ls' ? 'ls' : 'rd'];
-      x[2] += nq; if (res[i] != null) { x[1] += nq; x[0] += Math.round(res[i] / 100 * nq); }
+      x[1] += nq; if (res[i] != null) x[0] += Math.round(res[i] / 100 * nq);
     });
-    const pts = x => x[2] ? Math.round(x[0] / x[2] * 100) : 0;
-    const total = pts(sec.ls) + pts(sec.rd);
-    return { sec, pts, total, grade: total >= 140 ? '2급' : total >= 80 ? '1급' : 'рівень ще не досягнуто' };
+    const pts = x => x[1] ? Math.round(x[0] / x[1] * 100) : 0;
+    return { ls: pts(sec.ls), rd: pts(sec.rd), sec };
   }
   function mountExam(u) {
     const box = $('#exam', view); if (!box) return;
-    const E = u.exam || {}, L = E.listen || 40, R = E.read || 60, mins = L + R;
-    const st = (S.examStart || {})[u.id];
-    const r = examScore(u), a = r.sec;
-    box.innerHTML = `<div class="card exam-bar">
-      <div class="spread"><h2 style="margin:0">⏱ Пробний іспит</h2><span class="score" id="exam-clock">${st ? '' : mins + ':00'}</span></div>
-      <p class="muted small">듣기 ${L} хв · 읽기 ${R} хв. Натисни «Почати», виконуй завдання по порядку й натискай «Перевірити» в кожному — бали рахуються тут.</p>
-      <div class="exam-res">
-        <div><div class="muted small">듣기</div><b>${r.pts(a.ls)}</b><span class="muted small"> / 100 · ${a.ls[0]}/${a.ls[2]}</span></div>
-        <div><div class="muted small">읽기</div><b>${r.pts(a.rd)}</b><span class="muted small"> / 100 · ${a.rd[0]}/${a.rd[2]}</span></div>
-        <div><div class="muted small">Разом</div><b>${r.total}</b><span class="muted small"> / 200 · ${r.grade}</span></div>
-      </div>
-      <p class="muted small" style="margin:8px 0 0">Перевірено питань: ${a.ls[1] + a.rd[1]} з ${a.ls[2] + a.rd[2]}. Оцінка приблизна: 1급 — від 80, 2급 — від 140 балів.</p>
-      <div class="row" style="margin-top:10px">
-        ${st ? '<button class="btn sm secondary" data-exam="stop">Зупинити таймер</button>' : '<button class="btn sm" data-exam="start">Почати іспит</button>'}
-        <button class="btn sm ghost" data-exam="reset">Почати заново</button>
-      </div></div>`;
-    box.onclick = e => {
+    const E = u.exam || {}, L = E.listen || 40, R = E.read || 60;
+    S.examStart = S.examStart || {}; S.examDone = S.examDone || {};
+    const st = S.examStart[u.id], done = S.examDone[u.id];
+    const pr = $('#practice', view); if (pr) pr.classList.toggle('exam-mode', !done);
+    const r = examScore(u);
+    box.innerHTML = done ? `<div class="card exam-bar"><h2 style="margin:0 0 4px">Результат</h2>
+        ${resultBoxes(r.ls, r.rd, `правильних ${r.sec.ls[0] + r.sec.rd[0]} з ${r.sec.ls[1] + r.sec.rd[1]}`)}
+        <p class="muted small" style="margin:8px 0 0">Бали приблизні (частка правильних відповідей). Нижче видно правильні відповіді й тексти аудіо.</p>
+        <div class="row" style="margin-top:12px"><button class="btn sm" data-exam="reset">Пройти ще раз</button></div></div>`
+      : `<div class="card exam-bar">
+        <div class="spread"><h2 style="margin:0">⏱ Іспит</h2><span class="score" id="exam-clock">${st ? '' : (L + R) + ':00'}</span></div>
+        <p class="muted small">듣기 ${L} хв · 읽기 ${R} хв. Відповіді перевіряються тільки після «Здати іспит».</p>
+        <div class="row" style="margin-top:10px">${st ? '' : '<button class="btn sm" data-exam="start">Почати</button>'}</div></div>`;
+    const sub = $('#exam-submit', view);
+    if (sub) sub.hidden = !!done;
+    const onClick = e => {
       const b = e.target.closest('[data-exam]'); if (!b) return;
       e.stopPropagation();
-      S.examStart = S.examStart || {};
       if (b.dataset.exam === 'start') { S.examStart[u.id] = Date.now(); save(); mountExam(u); }
-      if (b.dataset.exam === 'stop') { delete S.examStart[u.id]; save(); mountExam(u); }
+      if (b.dataset.exam === 'submit') {
+        if (!confirm('Здати іспит? Після цього відповіді вже не зміниш.')) return;
+        S.examDone[u.id] = Date.now();
+        $$('#practice .pitem [data-p="check"]', view).forEach(c => c.click());
+        save(); route(); window.scrollTo(0, 0);
+      }
       if (b.dataset.exam === 'reset') {
-        if (!confirm('Стерти всі відповіді пробного іспиту й почати заново?')) return;
-        S.pres = S.pres || {}; delete S.pres[u.id]; delete S.examStart[u.id]; save(); route(); window.scrollTo(0, 0);
+        S.pres = S.pres || {}; delete S.pres[u.id]; delete S.examStart[u.id]; delete S.examDone[u.id];
+        save(); route(); window.scrollTo(0, 0);
       }
     };
-    clearInterval(examTimer);
-    if (st) {
-      const tick = () => {
-        const c = $('#exam-clock'); if (!c) return clearInterval(examTimer);
-        const gone = Math.floor((Date.now() - st) / 1000), left = Math.max(0, mins * 60 - gone);
-        const part = gone < L * 60 ? '듣기' : '읽기';
-        c.textContent = left ? `${part} · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Час вийшов';
-        if (!left) clearInterval(examTimer);
-      };
-      tick(); examTimer = setInterval(tick, 1000);
-    }
+    box.onclick = onClick; if (sub) sub.onclick = onClick;
+    if (!done) runClock(st, L, R); else clearInterval(examTimer);
+  }
+  function MockUnit(u) {
+    return `
+      <a class="back" href="#/course/${u.book}">← ${esc(bookShort(u.book))}</a>
+      <section class="hero unit-hero" data-glyph="模">
+        <div class="issue">TOPIK I · пробний тест застосунку</div>
+        <h1 class="ko">${esc(u.title)}</h1>
+        <p class="lead" style="margin:0">${esc(u.titleUk)} · 듣기 1–30 · 읽기 31–70</p>
+      </section>
+      <div class="section" id="exam"></div>
+      <div class="section" id="practice"></div>
+      <div class="section" id="exam-submit"><button class="btn" data-exam="submit">Здати іспит</button></div>`;
   }
 
   function gramCard(g) {
