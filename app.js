@@ -39,8 +39,16 @@
   }
   const today = () => new Date().toISOString().slice(0, 10);
   const fmtDate = d => { try { return new Date(d + 'T00:00:00').toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return d; } };
-  const unitLabel = u => u.no === 0 ? '한글' : u.no + '과';
-  const fullLabel = u => u.no === 0 ? esc(u.title) : u.no + '과 ' + esc(u.title);
+  /* books: 서울대 한국어 1A…2B (level = first digit) and exam prep books like TOPIK I (level 'topik') */
+  const bookById = id => BOOKS.find(b => b.id === id) || { id, title: String(id || '').toUpperCase() };
+  const levelOf = id => bookById(id).level || String(id || '').charAt(0);
+  const levelName = L => /^\d+$/.test(L) ? L + '급' : L === 'topik' ? 'TOPIK' : L.toUpperCase();
+  const isTopik = id => levelOf(id) === 'topik';
+  const isTopikUnit = u => /^topik/.test(u.id);
+  const bookShort = id => bookById(id).title;
+  const bookSource = id => isTopik(id) ? bookShort(id) : '서울대 한국어 ' + bookShort(id);
+  const unitLabel = u => u.no === 0 ? '한글' : isTopikUnit(u) ? (u.exam || /모의고사/.test(u.title) ? '모의고사' : '유형 ' + u.no) : u.no + '과';
+  const fullLabel = u => u.no === 0 || isTopikUnit(u) ? esc(u.title) : u.no + '과 ' + esc(u.title);
   /* answer comparison: same rules as practice.js */
   const norm = s => String(s || '').normalize('NFC').replace(/[\s.?!,~·…'"’‘“”«»()[\]{}​-‍﻿]/g, '').toLowerCase();
 
@@ -49,13 +57,15 @@
      voices loading late (iOS returns [] at first), Chrome garbage-collecting utterances,
      and devices with no Korean voice installed (we explain how to add one). */
   const TTS = 'speechSynthesis' in window ? window.speechSynthesis : null;
-  let koVoice = null, voicesLoaded = false, liveUtterance = null;
+  let koVoice = null, koMale = null, voicesLoaded = false, liveUtterance = null;
   function pickVoice() {
     if (!TTS) return;
     const vs = TTS.getVoices();
     if (vs.length) voicesLoaded = true;
     const ko = vs.filter(v => /^ko([-_]|$)/i.test(v.lang || ''));
     koVoice = ko.find(v => /yuna|유나|heami|sora|google/i.test(v.name) && v.localService) || ko.find(v => v.localService) || ko[0] || null;
+    /* a male Korean voice for '남' lines in TOPIK dialogues, when the device has one */
+    koMale = ko.find(v => /minsu|민수|injoon|인준|hyunsu|jinho|bong|male|남/i.test(v.name) && v !== koVoice) || null;
   }
   if (TTS) { pickVoice(); if (TTS.addEventListener) TTS.addEventListener('voiceschanged', pickVoice); else TTS.onvoiceschanged = pickVoice; }
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -87,28 +97,42 @@
       const p = silentAudio.play(); if (p && p.catch) p.catch(() => {});
     } catch (e) {}
   }
+  /* text: a string, or dialogue lines [['남'|'여', text], …] read one after another
+     (남 = male voice if the device has one, otherwise a lower pitch) */
   function speak(text, rate) {
     if (!TTS) { toast('Озвучення недоступне в цьому браузері', 3000); logTTS('no speechSynthesis'); return; }
     if (ios) iosAudioPlayback();
     pickVoice();
     if (voicesLoaded && !koVoice) { logTTS('no Korean voice'); voiceHelp(); return; }
+    const lines = Array.isArray(text) ? text : [[null, String(text)]];
     /* Everything below runs synchronously inside the tap — required by iOS Safari. */
     if (TTS.speaking || TTS.pending) TTS.cancel();
     if (!ios && TTS.paused) TTS.resume();      // Chrome can get stuck "paused"; resume() misbehaves on iOS
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'ko-KR'; u.rate = rate || 0.85; u.volume = 1;
-    if (koVoice && (koVoice.localService || !ios)) u.voice = koVoice;
+    const okVoice = v => v && (v.localService || !ios);
+    const us = lines.map(([who, x]) => {
+      const u = new SpeechSynthesisUtterance(x);
+      u.lang = 'ko-KR'; u.rate = rate || 0.85; u.volume = 1;
+      const male = who === '남';
+      if (male && okVoice(koMale)) u.voice = koMale;
+      else if (okVoice(koVoice)) u.voice = koVoice;
+      u.pitch = male && u.voice !== koMale ? 0.7 : who === '여' ? 1.1 : 1;
+      return u;
+    });
+    const first = us[0], last = us[us.length - 1];
     let started = false;
-    u.onstart = () => { started = true; logTTS('start'); };
-    u.onend = () => logTTS('end');
-    u.onerror = e => { logTTS('error ' + (e.error || '?')); if (!/interrupted|canceled/.test(e.error || '')) toast('Не вдалося відтворити звук (' + (e.error || '?') + '). Перезапусти браузер.', 4000); };
-    liveUtterance = u;                         // keep a reference so it is not garbage-collected mid-speech
-    TTS.speak(u);
-    logTTS('speak "' + text.slice(0, 12) + '" voice=' + (u.voice ? u.voice.name : 'auto'));
+    us.forEach(u => {
+      u.onstart = () => { if (!started) logTTS('start'); started = true; };
+      u.onerror = e => { logTTS('error ' + (e.error || '?')); if (!/interrupted|canceled/.test(e.error || '')) toast('Не вдалося відтворити звук (' + (e.error || '?') + '). Перезапусти браузер.', 4000); };
+    });
+    last.onend = () => logTTS('end');
+    liveUtterance = first; speak.queue = us;   // keep references so they are not garbage-collected mid-speech
+    us.forEach(u => TTS.speak(u));
+    const label = lines.map(l => l[1]).join(' ');
+    logTTS('speak "' + label.slice(0, 12) + '" lines=' + us.length + ' voice=' + (first.voice ? first.voice.name : 'auto'));
     /* Chrome/Edge sometimes drop an utterance queued right after cancel(); retry once (not needed/allowed on iOS) */
-    if (!ios) setTimeout(() => { if (!started && liveUtterance === u && !TTS.speaking) { logTTS('retry'); TTS.cancel(); TTS.speak(u); } }, 700);
+    if (!ios) setTimeout(() => { if (!started && liveUtterance === first && !TTS.speaking) { logTTS('retry'); TTS.cancel(); us.forEach(u => TTS.speak(u)); } }, 700);
     setTimeout(() => {
-      if (started || liveUtterance !== u) return;
+      if (started || liveUtterance !== first) return;
       logTTS('no start after 2.5s');
       if (!koVoice) voiceHelp();
       else toast(ios ? 'Звуку немає? Вимкни беззвучний режим (перемикач збоку) і збільш гучність.' : 'Звуку немає? Перевір гучність.', 5000);
@@ -194,7 +218,7 @@
         <div class="big-ko ko">${hello}</div>
         <p class="lead">Твоя корейська, твій темп.</p>
         ${cur ? `<a class="hero-card" href="#/unit/${cur.id}">
-          <div class="eyebrow">서울대 한국어 ${cur.book.toUpperCase()} · поточна тема</div>
+          <div class="eyebrow">${esc(bookSource(cur.book))} · поточна тема</div>
           <div class="title ko">${cur.no ? unitLabel(cur) + ' ' : ''}${esc(cur.title)}</div>
           <div class="muted">${esc(cur.titleUk)}</div>
           <div class="row" style="margin-top:10px">${(cur.grammar || []).slice(0, 4).map(g => `<span class="chip ko">${esc(g.p)}</span>`).join('')}</div>
@@ -230,9 +254,11 @@
     const b = SHOWN_BOOKS.find(x => x.id === courseBook) || SHOWN_BOOKS[0];
     if (!b) return '<div class="empty">🔒 Вчитель ще не відкрив тобі розділи курсу.</div>';
     return `
-      <div class="eyebrow">서울대 한국어</div>
-      <h1>${b.id.charAt(0)}급 · ${b.id.charAt(0) === "1" ? "Початковий рівень" : "Базове спілкування"}</h1>
-      <p class="lead">Послідовність тем і граматики — за 교재 구성표 підручника. Пояснення та вправи — авторські.</p>
+      ${isTopik(b.id) ? `<div class="eyebrow">한국어능력시험</div>
+      <h1>${esc(b.title)} · Підготовка до іспиту</h1>
+      <p class="lead">Усі типи завдань TOPIK I (듣기 1–30, 읽기 31–70) зі стратегіями та пробний іспит. Завдання авторські, у форматі іспиту.</p>` : `<div class="eyebrow">서울대 한국어</div>
+      <h1>${levelOf(b.id)}급 · ${levelOf(b.id) === "1" ? "Початковий рівень" : "Базове спілкування"}</h1>
+      <p class="lead">Послідовність тем і граматики — за 교재 구성표 підручника. Пояснення та вправи — авторські.</p>`}
       <div class="tabs">${SHOWN_BOOKS.map(x => `<button data-book="${x.id}" class="${x.id === b.id ? 'active' : ''}">${esc(x.title)}</button>`).join('')}</div>
       <p class="muted">${esc(b.subtitle)}</p>
       <div class="unit-list">${b.units.map(u => u.locked ? `
@@ -245,7 +271,7 @@
           <div class="unit-num ko">${u.no === 0 ? '한' : String(u.no).padStart(2, '0')}</div>
           <div class="grow">
             <div class="t ko">${esc(u.title)}</div>
-            <div class="s">${esc(u.titleUk)}${u.grammar ? ' · 문법 ' + u.grammar.length : ''}</div>
+            <div class="s">${esc(u.titleUk)}${isTopikUnit(u) ? ((window.PRACTICE || {})[u.id] || []).length ? ' · завдань ' + window.PRACTICE[u.id].length : '' : u.grammar ? ' · 문법 ' + u.grammar.length : ''}</div>
           </div>
           ${S.done[u.id] ? '<span class="seal ko" title="Завершено">완</span>' : (S.current === u.id ? '<span class="chip">зараз</span>' : '')}
         </a>`).join('')}
@@ -261,9 +287,9 @@
     const prev = OPEN[idx - 1], next = OPEN[idx + 1];
     const inDict = ko => S.words.some(w => w.ko === ko);
     return `
-      <a class="back" href="#/course/${u.book}">← ${u.book.toUpperCase()}</a>
+      <a class="back" href="#/course/${u.book}">← ${esc(bookShort(u.book))}</a>
       <section class="hero unit-hero" data-glyph="${esc(u.title.charAt(0))}">
-        <div class="issue"><strong>${u.no === 0 ? '00' : String(u.no).padStart(2, '0')}</strong>/ ${Math.max(...UNITS.filter(x => x.book.charAt(0) === u.book.charAt(0)).map(x => x.no))} · 서울대 한국어 ${u.book.toUpperCase()}</div>
+        <div class="issue"><strong>${u.no === 0 ? '00' : String(u.no).padStart(2, '0')}</strong>/ ${Math.max(...UNITS.filter(x => levelOf(x.book) === levelOf(u.book)).map(x => x.no))} · ${esc(bookSource(u.book))}</div>
         <h1 class="ko">${esc(u.title)}</h1>
         <p class="lead" style="margin:0">${esc(u.titleUk)}</p>
       </section>
@@ -284,6 +310,8 @@
         ${u.goals ? `<h3 style="margin-top:16px">Після розділу учень уміє</h3><ul class="plain">${u.goals.map(g => `<li>${esc(g)}</li>`).join('')}</ul>` : ''}
       </div>
 
+      ${u.types && u.types.length ? `<div class="section"><h2>유형 · Типи завдань</h2>${u.types.map(typeCard).join('')}</div>` : ''}
+
       ${u.vocab && u.vocab.length ? `
       <div class="section"><div class="spread"><h2>어휘 · Лексика</h2><button class="btn sm secondary" data-act="add-all">+ Усі в словник</button></div>
         <div class="card"><table class="vocab">${u.vocab.map((v, i) => `
@@ -302,6 +330,7 @@
           <div class="row" style="margin-top:16px"><button class="btn" data-act="check">Перевірити</button><button class="btn secondary" data-act="reset-ex">Заново</button><span id="ex-score" class="score"></span></div>
         </div></div>` : ''}
 
+      ${u.exam ? '<div class="section" id="exam"></div>' : ''}
       <div class="section" id="weekly"></div>
       <div class="section" id="practice"></div>
 
@@ -357,7 +386,13 @@
   };
   function mountPractice(u, filter) {
     if (filter) practiceFilter = filter;
-    mountSet('#practice', (window.PRACTICE || {})[u.id], u.id, {}, f => mountPractice(u, f));
+    const topik = isTopikUnit(u);
+    mountSet('#practice', (window.PRACTICE || {})[u.id], u.id, topik ? {
+      noFilter: true, title: u.exam ? '모의고사 · Пробний іспит' : '연습실 · Практика',
+      note: u.exam ? 'Повний тест у форматі TOPIK I: 듣기 1–30, 읽기 31–70. Питання авторські.' : 'Завдання у форматі TOPIK I (номери як на іспиті). Питання авторські.',
+      onScore: u.exam ? () => mountExam(u) : null
+    } : {}, f => mountPractice(u, f));
+    if (u.exam) mountExam(u);
     /* weekly set (data/weekly.js, replaced every week by a scheduled job) */
     const W = window.WEEKLY;
     if (W && W.items && W.items[u.id]) {
@@ -375,7 +410,74 @@
     const box = old.cloneNode(false); // fresh node drops old listeners
     old.replaceWith(box);
     box.innerHTML = window.Practice.render(items, key, pStore, practiceFilter, opts);
-    window.Practice.bind(box, items, key, pStore, f => { const y = window.scrollY; redraw(f); window.scrollTo(0, y); }, dStore);
+    window.Practice.bind(box, items, key, pStore, f => { const y = window.scrollY; redraw(f); window.scrollTo(0, y); }, dStore, opts.onScore);
+  }
+
+  /* TOPIK question-type card: what it tests + strategy */
+  function typeCard(t) {
+    return `<div class="card gram">
+      <div class="spread"><div class="pattern ko">${esc(t.ko)}</div>${t.n ? `<span class="chip">№ ${esc(t.n)}</span>` : ''}</div>
+      ${t.uk ? `<p>${esc(t.uk)}</p>` : ''}
+      ${t.ex ? `<div class="bogi"><span class="bogi-tag ko">예</span><span class="ko">${esc(t.ex[0])}</span>${t.ex[1] ? `<span class="muted small">— ${esc(t.ex[1])}</span>` : ''}</div>` : ''}
+      ${t.tips && t.tips.length ? `<ul class="plain tips">${t.tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  }
+
+  /* 모의고사: timer + estimated TOPIK I score from the answers checked so far.
+     Score ≈ share of correct answers × 100 per section (the real test weights items 2–4 points). */
+  let examTimer = null;
+  function examScore(u) {
+    const items = (window.PRACTICE || {})[u.id] || [], res = (S.pres || {})[u.id] || {};
+    const sec = { ls: [0, 0, 0], rd: [0, 0, 0] };            // right, answered, total questions
+    items.forEach((it, i) => {
+      if (it.t === 'wr') return;
+      const nq = it.qs ? it.qs.length : 1, x = sec[it.t === 'ls' ? 'ls' : 'rd'];
+      x[2] += nq; if (res[i] != null) { x[1] += nq; x[0] += Math.round(res[i] / 100 * nq); }
+    });
+    const pts = x => x[2] ? Math.round(x[0] / x[2] * 100) : 0;
+    const total = pts(sec.ls) + pts(sec.rd);
+    return { sec, pts, total, grade: total >= 140 ? '2급' : total >= 80 ? '1급' : 'рівень ще не досягнуто' };
+  }
+  function mountExam(u) {
+    const box = $('#exam', view); if (!box) return;
+    const E = u.exam || {}, L = E.listen || 40, R = E.read || 60, mins = L + R;
+    const st = (S.examStart || {})[u.id];
+    const r = examScore(u), a = r.sec;
+    box.innerHTML = `<div class="card exam-bar">
+      <div class="spread"><h2 style="margin:0">⏱ Пробний іспит</h2><span class="score" id="exam-clock">${st ? '' : mins + ':00'}</span></div>
+      <p class="muted small">듣기 ${L} хв · 읽기 ${R} хв. Натисни «Почати», виконуй завдання по порядку й натискай «Перевірити» в кожному — бали рахуються тут.</p>
+      <div class="exam-res">
+        <div><div class="muted small">듣기</div><b>${r.pts(a.ls)}</b><span class="muted small"> / 100 · ${a.ls[0]}/${a.ls[2]}</span></div>
+        <div><div class="muted small">읽기</div><b>${r.pts(a.rd)}</b><span class="muted small"> / 100 · ${a.rd[0]}/${a.rd[2]}</span></div>
+        <div><div class="muted small">Разом</div><b>${r.total}</b><span class="muted small"> / 200 · ${r.grade}</span></div>
+      </div>
+      <p class="muted small" style="margin:8px 0 0">Перевірено питань: ${a.ls[1] + a.rd[1]} з ${a.ls[2] + a.rd[2]}. Оцінка приблизна: 1급 — від 80, 2급 — від 140 балів.</p>
+      <div class="row" style="margin-top:10px">
+        ${st ? '<button class="btn sm secondary" data-exam="stop">Зупинити таймер</button>' : '<button class="btn sm" data-exam="start">Почати іспит</button>'}
+        <button class="btn sm ghost" data-exam="reset">Почати заново</button>
+      </div></div>`;
+    box.onclick = e => {
+      const b = e.target.closest('[data-exam]'); if (!b) return;
+      e.stopPropagation();
+      S.examStart = S.examStart || {};
+      if (b.dataset.exam === 'start') { S.examStart[u.id] = Date.now(); save(); mountExam(u); }
+      if (b.dataset.exam === 'stop') { delete S.examStart[u.id]; save(); mountExam(u); }
+      if (b.dataset.exam === 'reset') {
+        if (!confirm('Стерти всі відповіді пробного іспиту й почати заново?')) return;
+        S.pres = S.pres || {}; delete S.pres[u.id]; delete S.examStart[u.id]; save(); route(); window.scrollTo(0, 0);
+      }
+    };
+    clearInterval(examTimer);
+    if (st) {
+      const tick = () => {
+        const c = $('#exam-clock'); if (!c) return clearInterval(examTimer);
+        const gone = Math.floor((Date.now() - st) / 1000), left = Math.max(0, mins * 60 - gone);
+        const part = gone < L * 60 ? '듣기' : '읽기';
+        c.textContent = left ? `${part} · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : 'Час вийшов';
+        if (!left) clearInterval(examTimer);
+      };
+      tick(); examTimer = setInterval(tick, 1000);
+    }
   }
 
   function gramCard(g) {
@@ -463,7 +565,7 @@
     if (!out.length) return '<div class="empty">Нічого не знайдено</div>';
     let last = null, html = '';
     out.forEach(({ u, g }) => {
-      if (u !== last) { html += `<h3 class="ko" style="margin-top:24px"><a href="#/unit/${u.id}">${u.book.toUpperCase()} · ${fullLabel(u)}</a></h3>`; last = u; }
+      if (u !== last) { html += `<h3 class="ko" style="margin-top:24px"><a href="#/unit/${u.id}">${esc(bookShort(u.book))} · ${fullLabel(u)}</a></h3>`; last = u; }
       html += gramCard(g);
     });
     return html;
@@ -507,7 +609,7 @@
           <div class="word-ko ko">${esc(w.ko)}</div>
           <div>${esc(w.uk)}</div>
           ${w.example ? `<div class="word-ex ko">${esc(w.example)}</div>` : ''}
-          ${u ? `<a class="small" href="#/unit/${u.id}">${u.book.toUpperCase()} · ${unitLabel(u)}</a>` : '<span class="muted small">моє слово</span>'}
+          ${u ? `<a class="small" href="#/unit/${u.id}">${esc(bookShort(u.book))} · ${unitLabel(u)}</a>` : '<span class="muted small">моє слово</span>'}
         </div>
         ${sayBtn(w.ko)}
         <button class="icon-btn ${w.learned ? 'on' : ''}" data-learn="${w.id}" title="Вивчено">✓</button>
@@ -569,7 +671,7 @@
           return `<a class="list-item" href="#/student/${s.id}" style="color:inherit">
             <div class="avatar">${esc(s.name.slice(0, 1).toUpperCase())}</div>
             <div class="grow"><div style="font-weight:700">${esc(s.name)}</div>
-              <div class="muted small ko">${u ? u.book.toUpperCase() + ' · ' + fullLabel(u) : ''} · уроків: ${n}</div></div>
+              <div class="muted small ko">${u ? esc(bookShort(u.book)) + ' · ' + fullLabel(u) : ''} · уроків: ${n}</div></div>
             <span class="muted">›</span></a>`;
         }).join('')}</div>` : '<div class="empty">Поки немає учнів</div>'}</div>
       </div>
@@ -577,15 +679,15 @@
   }
   const STATUS = { pending: ['Очікує', 'todo'], approved: ['Має доступ', 'ok'], blocked: ['Заблоковано', ''] };
   /* ---- per-student course access: level (급) / book / unit ---- */
-  const LEVELS = [...new Set(BOOKS.map(b => b.id.charAt(0)))];
+  const LEVELS = [...new Set(BOOKS.map(b => levelOf(b.id)))];
   const openGrantPanels = new Set();
   let grantCache = [];
   function grantSummary(scopes) {
     if (!scopes.size) return '<span class="muted">розділи ще не відкриті</span>';
     const parts = [];
     LEVELS.forEach(L => {
-      if (scopes.has('level:' + L)) { parts.push(`${L}급`); return; }
-      BOOKS.filter(b => b.id.charAt(0) === L).forEach(b => {
+      if (scopes.has('level:' + L)) { parts.push(levelName(L)); return; }
+      BOOKS.filter(b => levelOf(b.id) === L).forEach(b => {
         if (scopes.has('book:' + b.id)) parts.push(b.title);
         else { const n = b.units.filter(u => scopes.has('unit:' + u.id)).length; if (n) parts.push(`${b.title}: ${n} розд.`); }
       });
@@ -596,11 +698,11 @@
     const cb = (scope, label, checked, disabled, cls) => `<label class="gchk ${cls || ''}${disabled ? ' dis' : ''}"><input type="checkbox" data-grant="${scope}" data-uid="${p.id}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}> <span class="ko">${label}</span></label>`;
     return `<div class="grant-panel">${LEVELS.map(L => {
       const lv = scopes.has('level:' + L);
-      return `<div class="grant-level">${cb('level:' + L, `<b>Увесь ${L}급</b>`, lv, false, 'lvl')}
-        ${BOOKS.filter(b => b.id.charAt(0) === L).map(b => {
+      return `<div class="grant-level">${cb('level:' + L, `<b>Увесь ${levelName(L)}</b>`, lv, false, 'lvl')}
+        ${BOOKS.filter(b => levelOf(b.id) === L).map(b => {
           const bk = lv || scopes.has('book:' + b.id);
           return `<div class="grant-book">${cb('book:' + b.id, `<b>Уся книга ${esc(b.title)}</b>`, bk, lv, 'bk')}
-            <div class="grant-units">${b.units.map(u => cb('unit:' + u.id, `${u.no === 0 ? '한글' : u.no + '과'} <span class="muted">${esc(u.title)}</span>`, bk || scopes.has('unit:' + u.id), bk)).join('')}</div></div>`;
+            <div class="grant-units">${b.units.map(u => cb('unit:' + u.id, `${unitLabel(u)} <span class="muted">${esc(u.title)}</span>`, bk || scopes.has('unit:' + u.id), bk)).join('')}</div></div>`;
         }).join('')}</div>`;
     }).join('')}</div>`;
   }
@@ -673,7 +775,7 @@
     return `
       <a class="back" href="#/studio">← Учні</a>
       <div class="row" style="margin-bottom:16px"><div class="avatar" style="width:56px;height:56px;font-size:1.3rem">${esc(s.name.slice(0, 1).toUpperCase())}</div>
-        <div><h1 style="margin:0">${esc(s.name)}</h1>${u ? `<a class="ko" href="#/unit/${u.id}">${u.book.toUpperCase()} · ${fullLabel(u)}</a>` : ''}</div></div>
+        <div><h1 style="margin:0">${esc(s.name)}</h1>${u ? `<a class="ko" href="#/unit/${u.id}">${esc(bookShort(u.book))} · ${fullLabel(u)}</a>` : ''}</div></div>
       <div class="card">
         <div class="field"><label for="st-unit">Поточний розділ</label><select id="st-unit">${unitOptions(s.unitId)}</select></div>
         <div class="field"><label for="st-notes">Нотатки викладача</label><textarea id="st-notes" placeholder="Сильні сторони, типові помилки, цілі…">${esc(s.notes)}</textarea></div>

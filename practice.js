@@ -7,6 +7,8 @@
   const okText = (val, a, alt) => [a].concat(alt || []).some(x => norm(x) === norm(val));
   const shuffle = arr => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const say = (t, slow) => window.KS && window.KS.speak(t, slow ? 0.6 : 0.85);
+  const script = say => Array.isArray(say) ? say.map(l => (l[0] === '남' ? '남자' : '여자') + ': ' + l[1]).join('\n') : say;
+  const choices = (q, k) => `<div class="rq" data-k="${k}"><div class="ex-prompt ko">${k + 1}. ${esc(q.q)}</div><div class="opts col">${q.o.map((o, j) => `<button class="popt ko" data-j="${j}">${'①②③④'[j] || j + 1} ${esc(o)}</button>`).join('')}</div><div class="ex-fb"></div></div>`;
   const field = (attrs) => `<input type="text" class="ex-input p-in ko" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" ${attrs || ''}>`;
 
   const TYPE = {
@@ -44,12 +46,14 @@
       }
       case 'ls':
         return `<div class="row" style="margin-bottom:12px"><button class="btn sm p-play">🔊 Слухати</button><button class="btn sm secondary p-slow">🐢 Повільно</button><button class="btn ghost sm p-show">Показати текст</button></div>
-          <div class="ls-text ko muted" hidden>${esc(it.say)}</div>
-          ${it.m === 'dict' ? field('placeholder="Запиши, що почув(-ла)"') : `<div class="opts col">${it.o.map((o, k) => `<button class="popt ko" data-k="${k}">${k + 1}. ${esc(o)}</button>`).join('')}</div>`}<div class="ex-fb"></div>`;
+          <div class="ls-text ko muted" hidden>${esc(script(it.say))}</div>
+          ${it.m === 'qs' ? it.qs.map(choices).join('')
+            : it.m === 'dict' ? field('placeholder="Запиши, що почув(-ла)"') + '<div class="ex-fb"></div>'
+            : `<div class="opts col">${it.o.map((o, k) => `<button class="popt ko" data-k="${k}">${'①②③④'[k] || k + 1} ${esc(o)}</button>`).join('')}</div><div class="ex-fb"></div>`}`;
       case 'rd':
-        return `<div class="passage ko">${esc(it.txt)}</div>
+        return `<div class="passage ko${it.box ? ' notice' : ''}">${esc(it.txt)}</div>
           ${it.gl ? `<div class="gloss small">${Object.keys(it.gl).map(k => `<span><b class="ko">${esc(k)}</b> — ${esc(it.gl[k])}</span>`).join('')}</div>` : ''}
-          ${it.qs.map((q, k) => `<div class="rq" data-k="${k}"><div class="ex-prompt ko">${k + 1}. ${esc(q.q)}</div><div class="opts col">${q.o.map((o, j) => `<button class="popt ko" data-j="${j}">${'①②③④'[j] || j + 1} ${esc(o)}</button>`).join('')}</div><div class="ex-fb"></div></div>`).join('')}`;
+          ${it.qs.map(choices).join('')}`;
       case 'ox':
         return `${it.txt ? `<div class="passage ko">${esc(it.txt)}</div>` : ''}${it.say ? `<div class="row" style="margin-bottom:12px"><button class="btn sm p-play">🔊 Слухати</button><button class="btn sm secondary p-slow">🐢 Повільно</button></div>` : ''}
           ${it.s.map((s, k) => `<div class="ox-row" data-k="${k}"><span class="ko grow">${esc(s[0])}</span><button class="oxb" data-v="1">O</button><button class="oxb" data-v="0">X</button></div>`).join('')}<div class="ex-fb"></div>`;
@@ -75,7 +79,7 @@
       ${items.map((it, i) => !inFilter(it, filter) ? '' : `
         <div class="card pitem" data-i="${i}" data-t="${it.t}">
           <div class="spread p-head"><span class="eyebrow" style="margin:0">${String(i + 1).padStart(2, '0')} · ${TYPE[it.t] ? TYPE[it.t][0] + ' · ' + TYPE[it.t][1] : it.t}</span>
-            <span class="row" style="gap:6px">${res[i] != null ? `<span class="chip ${res[i] >= 100 ? 'ok' : 'todo'}">${res[i]}%</span>` : ''}${it.src ? `<span class="chip ko">${esc(it.src)}</span>` : ''}</span></div>
+            <span class="row" style="gap:6px">${it.n ? `<span class="chip qn">№ ${esc(it.n)}</span>` : ''}${res[i] != null ? `<span class="chip ${res[i] >= 100 ? 'ok' : 'todo'}">${res[i]}%</span>` : ''}${it.src ? `<span class="chip ko">${esc(it.src)}</span>` : ''}</span></div>
           <div class="ex-prompt ko">${esc(it.q)}</div>
           ${it.uk ? `<div class="muted small" style="margin:-4px 0 12px">${esc(it.uk)}</div>` : ''}
           <div class="p-body">${body(it, i)}</div>
@@ -95,7 +99,7 @@
     el.innerHTML = ok ? 'Правильно!' : (right != null ? `Правильно: <b class="ko">${esc(right)}</b>` : 'Є помилки — спробуй ще.');
   }
 
-  function bind(root, items, unitId, store, rerender, draftStore) {
+  function bind(root, items, unitId, store, rerender, draftStore, onScore) {
     if (!root) return;
     root.addEventListener('click', e => {
       e.stopPropagation();
@@ -104,7 +108,7 @@
       const card = e.target.closest('.pitem'); if (!card) { const s0 = e.target.closest('[data-say]'); if (s0) say(s0.dataset.say); return; }
       const i = +card.dataset.i, it = items[i];
       const t = e.target.closest('button'); if (!t) return;
-      const score = pct => { const r = store.get(unitId) || {}; r[i] = pct; store.set(unitId, r); card.querySelector('.p-score').textContent = pct + '%'; };
+      const score = pct => { const r = store.get(unitId) || {}; r[i] = pct; store.set(unitId, r); card.querySelector('.p-score').textContent = pct + '%'; if (onScore) onScore(i, pct); };
 
       if (t.dataset.say) return say(t.dataset.say);
       if (t.classList.contains('p-play')) return say(it.say);
@@ -185,7 +189,7 @@
         total = 1; right = ok ? 1 : 0;
         card.querySelector('.ord-ans').classList.toggle('right', ok); card.querySelector('.ord-ans').classList.toggle('wrong', !ok);
         fb(card.querySelector('.p-body > .ex-fb'), ok, it.a[0]);
-      } else if (it.t === 'ls') {
+      } else if (it.t === 'ls' && it.m !== 'qs') {
         total = 1;
         if (it.m === 'dict') {
           const inp = card.querySelector('input'), ok = okText(inp.value, it.a, it.alt);
@@ -197,12 +201,13 @@
           fb(card.querySelector('.p-body > .ex-fb'), ok, null);
           card.querySelector('.ls-text').hidden = false;
         }
-      } else if (it.t === 'rd') {
+      } else if (it.t === 'rd' || (it.t === 'ls' && it.m === 'qs')) {
         card.querySelectorAll('.rq').forEach(rq => {
           const q = it.qs[+rq.dataset.k], sel = rq.querySelector('.popt.sel'), ok = !!sel && +sel.dataset.j === q.a;
           rq.querySelectorAll('.popt').forEach(o => { if (+o.dataset.j === q.a) o.classList.add('right'); else if (o === sel) o.classList.add('wrong'); });
           fb(rq.querySelector('.ex-fb'), ok, null); total++; if (ok) right++;
         });
+        if (it.t === 'ls') card.querySelector('.ls-text').hidden = false;
       } else if (it.t === 'ox') {
         card.querySelectorAll('.ox-row').forEach(row => {
           const want = it.s[+row.dataset.k][1] ? '1' : '0', sel = row.querySelector('.oxb.sel'), ok = !!sel && sel.dataset.v === want;
