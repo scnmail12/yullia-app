@@ -179,7 +179,88 @@
         <div class="sw-line"><span class="sw-tag">Правильно:</span> <span class="ko">${right}</span></div>
         ${r.notes.length ? `<ul class="sw-notes">${r.notes.map(n => `<li>${n}</li>`).join('')}</ul>` : ''}`;
     }
-    return { check, html, accepted, tight, expand };
+    /* ---- free writing (wr): mechanical checks only (the teacher still reads the text) ---- */
+    const jung = ch => { const c = code(ch || ''); return c < 0 ? '' : JUNG[(c % 588) / 28 | 0]; };
+    const isH = ch => code(ch || '') >= 0;
+    const NOUN_HADA = new Set(('공부 운동 일 요리 청소 빨래 숙제 쇼핑 전화 이야기 얘기 산책 여행 수영 노래 등산 운전 연습 준비 출발 도착 시작 결혼 졸업 입학 '
+      + '수업 식사 세수 샤워 데이트 게임 설거지 약속 예약 주문 구경 생각 걱정 대답 질문 연락 통화 이사 취직 출근 퇴근 아르바이트 알바 인사 소개 '
+      + '선물 사용 이용 계획 정리 방문 초대 참석 신청 확인 공부를 숙제를 운동을 일을 요리를 청소를').split(' '));
+    const ALONE = new Set(['은', '는', '을', '를', '에', '에서', '에게', '한테', '부터', '까지', '의', '으로', '께서', '이랑']);
+    const VERB_START = /^(가|갔|와|왔|오|먹|마셔|마시|마셨|봐|봤|보|해요|했|돼|되|읽|자요|잤|사요|샀|만나|만났|좋|들|써|쓰|앉|일어|알|놀|받|팔|줘|주|입|씻|배우|배웠|기다|다녀|바빠|바빴|비싸|싸|커요|컸|작|많|적|멀|추워|추웠|더워|더웠|맛있|재미있|예뻐|아파|아팠)/;
+    const WL = new Set(['가을', '마을', '지은', '나은', '이은', '나을', '지을', '부을', '이을', '경로', '통로', '진로', '항로']);
+    const SET_PHRASE = /(감사합니다|반갑습니다|고맙습니다|뵙겠습니다|안녕하십니까|죄송합니다|부탁합니다|부탁드립니다|축하합니다)$/;
+    function lint(text, task) {
+      const raw = String(text || '').normalize('NFC').replace(/[​-‍﻿]/g, '');
+      if (!raw.trim()) return { empty: true, out: [], notes: [] };
+      const out = [], notes = [];
+      const add = (sent, frag, fix, why) => { if (!out.some(o => o.frag === frag && o.why === why)) out.push({ sent, frag, fix, why }); };
+      const sents = raw.replace(/([.?!])\s*/g, '$1\n').split(/\n+/).map(s => s.replace(/^[^:：]{1,12}[:：]\s*/, '').trim()).filter(s => /[가-힣]/.test(s));
+      if (/[A-Za-z]{2,}/.test(raw)) notes.push('Є латинські літери — пиши корейською (한글).');
+      let yo = 0, nida = 0;
+      sents.forEach(sent => {
+        const W = clean(sent).split(' ').filter(Boolean);
+        W.forEach((w, i) => {
+          const last = w.slice(-1), prev = w.slice(-2, -1), stem = w.slice(0, -1), bt = batchim(prev), next = W[i + 1] || '';
+          if (w.length >= 2 && isH(prev) && !WL.has(w)) {
+            if (last === '를' && bt) add(sent, w, stem + '을', 'Після приголосного (받침) — 을, не 를.');
+            if (last === '을' && !bt) add(sent, w, stem + '를', 'Після голосного — 를, не 을.');
+            if (last === '은' && !bt) add(sent, w, stem + '는', 'Після голосного — 는, не 은.');
+            if (last === '와' && bt) add(sent, w, stem + '과', 'Після приголосного — 과 (або 하고), не 와.');
+            if (/[^으]로$/.test(w) && bt && bt !== 'ㄹ' && !/(으로)$/.test(w)) add(sent, w, stem + '으로', 'Після приголосного (крім ㄹ) — 으로.');
+            if (/으로$/.test(w) && w.length >= 3) { const b2 = batchim(w.slice(-3, -2)); if (isH(w.slice(-3, -2)) && (!b2 || b2 === 'ㄹ')) add(sent, w, w.slice(0, -2) + '로', b2 ? 'Після ㄹ — 로, без 으.' : 'Після голосного — 로, без 으.'); }
+          }
+          if (/^저(는|도)?이예요$/.test(w)) add(sent, w, w.replace(/이예요$/, '예요'), 'Пишеться 예요 / 이에요, не 이예요.');
+          else if (/아니예요$/.test(w)) add(sent, w, w.replace(/아니예요$/, '아니에요'), '아니다 → 아니에요.');
+          else if (/예요$/.test(w) && w.length >= 3 && batchim(w.slice(-3, -2))) add(sent, w, w.replace(/예요$/, '이에요'), 'Після приголосного — 이에요, не 예요.');
+          if (w === '저가') add(sent, w, '제가', '저 + 가 → 제가.');
+          if (w === '너가') add(sent, w, '네가', '너 + 가 → 네가.');
+          /* vowel harmony at the end of a verb: 먹아요 / 좋어요 */
+          const m = w.match(/([가-힣])(아요|어요|아서|어서|아도|어도|아야|어야|았어요|었어요|았다|었다|았습니다|었습니다|았어|었어)$/);
+          if (m && m.index + 1 === w.length - m[2].length) {
+            const V = jung(m[1]), B = batchim(m[1]), A = /^아|^았/.test(m[2]);
+            if (A && !/[ㅏㅗㅑ]/.test(V) && m[1] !== '하') add(sent, w, w.slice(0, -m[2].length) + m[2].replace(/^아/, '어').replace(/^았/, '었'), 'Після голосних, крім ㅏ/ㅗ, — -어요 / -었-.');
+            if (!A && /[ㅏㅗㅑ]/.test(V) && B && B !== 'ㅆ') add(sent, w, w.slice(0, -m[2].length) + m[2].replace(/^어/, '아').replace(/^었/, '았'), 'Після ㅏ, ㅗ — -아요 / -았-.');
+          }
+          if (/하[아어]요$/.test(w)) add(sent, w, w.replace(/하[아어]요$/, '해요'), '하다 → 해요.');
+          /* 안/못 + noun-하다 verb: 공부 안 해요 */
+          if ((w === '안' || w === '못') && /^[가-힣]+(해요|했어요|합니다|했습니다|할|하고|해서|해|했다|하세요|하지|할게요|할 거예요)$/.test(next)) {
+            const k = next.search(/(해요|했어요|합니다|했습니다|할|하고|해서|해|했다|하세요|하지|할게요)$/), noun = next.slice(0, k);
+            if (NOUN_HADA.has(noun)) add(sent, w + ' ' + next, `${noun} ${w} ${next.slice(k)}`, `У дієсловах на 하다 «${w}» стоїть перед 하다.`);
+          }
+          /* spacing */
+          if (i && ALONE.has(w) && /[가-힣]$/.test(W[i - 1])) add(sent, W[i - 1] + ' ' + w, W[i - 1] + w, 'Частку пишуть разом зі словом.');
+          if (/^안[가-힣]+요$/.test(w) && VERB_START.test(w.slice(1))) add(sent, w, '안 ' + w.slice(1), '«안» (не) пишеться окремо.');
+          if (/^못[가-힣]+요$/.test(w) && !/^(하|해|했|생|난)/.test(w.slice(1)) && VERB_START.test(w.slice(1))) add(sent, w, '못 ' + w.slice(1), '«못» пишеться окремо.');
+          if (w === '않' && next) add(sent, w + ' ' + next, '안 ' + next, '«не» перед дієсловом — 안. 않 буває лише в -지 않다.');
+          if (/^안아요$/.test(w) && /지$/.test(W[i - 1] || '')) add(sent, W[i - 1] + ' ' + w, W[i - 1] + ' 않아요', '-지 않아요 пишеться з 않.');
+        });
+        /* typical misspellings */
+        [[/되요/, '돼요', '되 + 어요 = 돼요.'], [/됬/, '됐', '되 + 었 = 됐.'], [/([가-힣])께요/, null, 'Пишеться -(으)ㄹ게요, не -ㄹ께요.'], [/몇일/, '며칠', 'Правильно: 며칠.'],
+         [/([가-힣])니다/, null, '-ㅂ니다 / -습니다 пишеться з ㅂ.'], [/읍니다/, '습니다', 'Зараз пишуть -습니다 (не -읍니다).'], [/웬지/, '왠지', 'Правильно: 왠지.'], [/금새/, '금세', 'Правильно: 금세.'], [/어떻해/, '어떡해', 'Правильно: 어떡해 (що робити?) або 어떻게 (як?).'],
+         [/안녕하새요/, '안녕하세요', 'Правильно: 안녕하세요.']].forEach(([re, fix, why]) => {
+          const mm = sent.match(re); if (!mm) return;
+          if (why.startsWith('Пишеться -(으)ㄹ게요')) { if (batchim(mm[1]) !== 'ㄹ') return; add(sent, mm[0], mm[1] + '게요', why); return; }
+          if (why.startsWith('-ㅂ니다')) { if (batchim(mm[1]) !== 'ㅁ') return; const c = code(mm[1]); add(sent, mm[0], String.fromCharCode(H0 + c - 16 + 17) + '니다', why); return; }
+          add(sent, mm[0], fix, why);
+        });
+        const lw = W[W.length - 1] || '';
+        if (!SET_PHRASE.test(lw)) { if (/요$/.test(lw)) yo++; else if (/(니다|니까)$/.test(lw)) nida++; }
+      });
+      if (yo && nida && !/[:：]/.test(raw)) notes.push('Змішано стилі: є речення на -요 і на -(스)ㅂ니다. У тексті зазвичай тримаються одного стилю.');
+      const need = /(\d+)\s*[–-]\s*\d+\s*(речен|реплік)/.exec(task || '') || /(\d+)\s*(речен|реплік)/.exec(task || '');
+      if (need && sents.length < +need[1]) notes.push(`Речень: ${sents.length}, а потрібно щонайменше ${need[1]}.`);
+      return { out, notes, count: sents.length };
+    }
+    function lintHtml(r) {
+      if (r.empty) return '<div class="muted small">Спершу напиши текст.</div>';
+      const mark = (sent, frag) => { const s = esc(sent), f = esc(frag), k = s.indexOf(f); return k < 0 ? s : s.slice(0, k) + `<mark class="bad">${f}</mark>` + s.slice(k + f.length); };
+      const head = r.out.length ? `<b>Можливі помилки: ${r.out.length}</b>` : '<b>✓ Типових помилок не знайдено.</b>';
+      return `<div class="sw-fb wr-fb">${head}
+        ${r.out.length ? `<ul class="sw-notes">${r.out.map(o => `<li><span class="ko">${mark(o.sent, o.frag)}</span><br>${o.fix ? `<span class="ko">${esc(o.frag)}</span> → <mark class="fix ko">${esc(o.fix)}</mark> · ` : ''}${esc(o.why)}</li>`).join('')}</ul>` : ''}
+        ${r.notes.length ? `<ul class="sw-notes">${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+        <div class="muted small" style="margin-top:6px">Автоматично перевіряються частки, закінчення, пробіли й написання. Зміст і природність тексту перевірить учитель.</div></div>`;
+    }
+    return { check, html, accepted, tight, expand, lint, lintHtml };
   })();
 
   const TYPE = {
@@ -237,7 +318,8 @@
           <div class="ex-fb"></div></div>`).join('');
       case 'wr':
         return `${it.use ? `<div class="row" style="margin-bottom:10px">${it.use.map(u => `<span class="chip ko">${esc(u)}</span>`).join('')}</div>` : ''}
-          <textarea class="ko p-wr" placeholder="Пиши тут корейською…"></textarea>
+          <textarea class="ko p-wr" lang="ko" spellcheck="false" placeholder="Пиши тут корейською…"></textarea>
+          <div class="wr-out"></div>
           ${it.chk ? `<div class="chk">${it.chk.map(c => `<label><input type="checkbox"> ${esc(c)}</label>`).join('')}</div>` : ''}
           <div class="model" hidden><div class="eyebrow">모범 답안 · Зразок</div><div class="ko">${esc(it.model)}</div></div>`;
     }
@@ -262,7 +344,7 @@
           ${it.uk ? `<div class="muted small" style="margin:-4px 0 12px">${esc(it.uk)}</div>` : ''}
           <div class="p-body">${body(it, i)}</div>
           <div class="row p-foot">
-            ${it.t === 'wr' ? '<button class="btn sm" data-p="model">Показати зразок</button><button class="btn sm secondary" data-p="copy">Скопіювати для вчителя</button>'
+            ${it.t === 'wr' ? '<button class="btn sm" data-p="lint">Перевірити текст</button><button class="btn sm secondary" data-p="model">Показати зразок</button><button class="btn sm secondary" data-p="copy">Скопіювати для вчителя</button>'
               : it.t === 'match' ? '<button class="btn sm secondary" data-p="reset">Заново</button>'
               : '<button class="btn sm" data-p="check">Перевірити</button><button class="btn sm secondary" data-p="reset">Заново</button>'}
             <span class="score p-score"></span>
@@ -334,6 +416,10 @@
         t.classList.add('sel'); return;
       }
       /* writing */
+      if (t.dataset.p === 'lint') {
+        const out = card.querySelector('.wr-out'); out.innerHTML = SW.lintHtml(SW.lint(card.querySelector('.p-wr').value, it.uk));
+        return;
+      }
       if (t.dataset.p === 'model') { const m = card.querySelector('.model'); m.hidden = !m.hidden; t.textContent = m.hidden ? 'Показати зразок' : 'Сховати зразок'; return; }
       if (t.dataset.p === 'copy') {
         const txt = `${it.q}\n\n${card.querySelector('.p-wr').value}`;
