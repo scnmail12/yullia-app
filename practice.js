@@ -1,5 +1,5 @@
 /* 연습실 — textbook- and TOPIK-style practice items.
-   Types: match, tf, dlg, ord, ls, rd, ox, wr (see data/PRACTICE_SCHEMA.md). */
+   Types: match, tf, dlg, ord, ls, rd, ox, sw, wr (see data/PRACTICE_SCHEMA.md). */
 (function () {
   'use strict';
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -11,13 +11,185 @@
   const choices = (q, k) => `<div class="rq" data-k="${k}"><div class="ex-prompt ko">${k + 1}. ${esc(q.q)}</div><div class="opts col">${q.o.map((o, j) => `<button class="popt ko" data-j="${j}">${'①②③④'[j] || j + 1} ${esc(o)}</button>`).join('')}</div><div class="ex-fb"></div></div>`;
   const field = (attrs) => `<input type="text" class="ex-input p-in ko" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" ${attrs || ''}>`;
 
+  /* ---------- 쓰기 (sw): grade a typed sentence and say what is wrong ----------
+     The answer is compared with the closest accepted answer (spaces/punctuation ignored for grading),
+     then aligned word by word to name wrong particles, endings, tense, style, spelling, missing words. */
+  const SW = (function () {
+    const H0 = 0xAC00, HN = 11172;
+    const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ', JUNG = 'ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ';
+    const JONG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+    const code = ch => { const c = ch.charCodeAt(0) - H0; return c >= 0 && c < HN ? c : -1; };
+    const jamo = s => Array.from(s).map(ch => { const c = code(ch); return c < 0 ? ch : CHO[c / 588 | 0] + JUNG[(c % 588) / 28 | 0] + JONG[c % 28]; }).join('');
+    const batchim = ch => { const c = code(ch || ''); return c < 0 ? '' : JONG[c % 28]; };
+    const clean = s => String(s || '').normalize('NFC').replace(/[​-‍﻿]/g, '')
+      .replace(/[.?!,~·…'"’‘“”«»()[\]{}:;\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    const tight = s => clean(s).replace(/ /g, '');
+    const lev = (a, b) => {
+      a = Array.from(a); b = Array.from(b);
+      let prev = b.map((_, j) => j + 1); prev.unshift(0);
+      for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = cur;
+      }
+      return prev[b.length];
+    };
+    const prefix = (a, b) => { let k = 0; while (k < a.length && k < b.length && a[k] === b[k]) k++; return k; };
+    /* "(저는) 커피(를) 마셔요" → every variant */
+    const expand = s => {
+      const m = /\(([^()]*)\)/.exec(s);
+      if (!m) return [s.replace(/\s+/g, ' ').trim()];
+      const pre = s.slice(0, m.index), post = s.slice(m.index + m[0].length);
+      /* "안드리 (씨)는" without 씨 → "안드리는" (the particle joins the word before) */
+      return expand(pre + m[1] + post).concat(expand((/\s$/.test(pre) && /^[^\s.?!,]/.test(post) ? pre.replace(/\s+$/, '') : pre) + post));
+    };
+    const accepted = x => Array.from(new Set([x.a].concat(x.alt || []).reduce((r, s) => r.concat(expand(s)), [])));
+
+    const PART = ['에서는', '에서도', '에게서', '한테서', '으로는', '이었어요', '였어요', '이에요', '예요', '입니다', '이라고', '라고',
+      '으로', '에서', '에게', '한테', '께서', '부터', '까지', '처럼', '보다', '하고', '이랑', '이나', '에는', '에도', '은', '는', '이', '가',
+      '을', '를', '에', '도', '의', '와', '과', '로', '만', '께', '랑', '나'];
+    const PSET = new Set(PART);
+    const ALLO = [['은', '는'], ['이', '가'], ['을', '를'], ['과', '와'], ['으로', '로'], ['이랑', '랑'], ['이나', '나'],
+      ['이에요', '예요'], ['이었어요', '였어요'], ['이라고', '라고'], ['으로는', '로는']];
+    const GLOSS = { '은': 'тема', '는': 'тема', '이': 'підмет', '가': 'підмет', '을': 'прямий додаток: кого? що?', '를': 'прямий додаток: кого? що?',
+      '에': 'час, де щось є, або куди', '에서': 'де відбувається дія або звідки', '에게': 'кому', '한테': 'кому', '께': 'кому (шанобливо)',
+      '께서': 'підмет (шанобливо)', '도': '«теж»', '의': '«чий»', '와': '«і, з»', '과': '«і, з»', '하고': '«і, з»', '랑': '«і, з»', '이랑': '«і, з»',
+      '으로': 'засіб або напрямок', '로': 'засіб або напрямок', '부터': '«від, з»', '까지': '«до»', '만': '«тільки»', '보다': '«ніж»', '처럼': '«як»' };
+    const COP = new Set(['이에요', '예요', '이었어요', '였어요', '입니다', '이라고', '라고']);
+    const g = p => GLOSS[p] ? ` (${GLOSS[p]})` : '';
+    const q = s => `«${esc(s)}»`;
+
+    function particleNote(stem, a, b) {
+      const pair = ALLO.find(p => p.includes(a) && p.includes(b)), bt = batchim(stem.slice(-1));
+      if (a && b && pair) {
+        if (pair[0] === '으로' || pair[0] === '으로는') return bt === 'ㄹ'
+          ? `${q(stem)} закінчується на ㄹ → ${q(b)} (після ㄹ — без 으).`
+          : `${q(stem)} закінчується на ${bt ? 'приголосний' : 'голосний'} → ${q(b)}, а не ${q(a)}.`;
+        return `${q(stem)} закінчується на ${bt ? `приголосний (받침 ${bt})` : 'голосний'} → ${q(b)}, а не ${q(a)}.`;
+      }
+      if (COP.has(a) || COP.has(b)) return `Після ${q(stem)} потрібно ${q(b || stem)}${a ? `, а не ${q(a)}` : ''}.`;
+      if (!a) return `Після ${q(stem)} бракує ${q(b)}${g(b)}.`;
+      if (!b) return `Після ${q(stem)} ${q(a)} тут не потрібна.`;
+      return `Частка після ${q(stem)}: потрібна ${q(b)}${g(b)}, а не ${q(a)}${g(a)}.`;
+    }
+    function wordNote(s, t) {
+      for (let k = prefix(s, t); k >= 1; k--) {
+        const a = s.slice(k), b = t.slice(k);
+        if (a !== b && (!a || PSET.has(a)) && (!b || PSET.has(b))) return particleNote(t.slice(0, k), a, b);
+      }
+      const sj = jamo(s), tj = jamo(t);
+      if (prefix(sj, tj) >= 2) {
+        if (sj.length === tj.length) {
+          const d = Array.from(sj).map((c, i) => [c, tj[i]]).filter(([x, y]) => x !== y);
+          if (d.length === 1 && /^(ㅏㅓ|ㅓㅏ|ㅘㅝ|ㅝㅘ)$/.test(d[0].join('')))
+            return `Голосна: ${q(t)}, а не ${q(s)}. Після ㅏ, ㅗ — -아요 / -았-, після інших голосних — -어요 / -었-.`;
+        }
+        if (lev(sj, tj) === 1) return `Написання: ${q(t)}, а не ${q(s)}.`;
+        if (/(요|다|까|고|서|면|지|게|는|은|ㄹ)$/.test(t) || /[요다까]$/.test(s)) return `Форма слова: ${q(t)}, а не ${q(s)}.`;
+      }
+      if (lev(sj, tj) <= 2) return `Написання: ${q(t)}, а не ${q(s)}.`;
+      return `Тут потрібно ${q(t)}, а не ${q(s)}.`;
+    }
+    /* sentence-level grammar: speech style, tense, future, negation */
+    function gramNotes(S, T) {
+      const n = [], sl = S[S.length - 1] || '', tl = T[T.length - 1] || '', st = S.join(''), tt = T.join('');
+      if (/요$/.test(tl) && /(니다|니까)$/.test(sl)) n.push('Стиль: тут потрібна форма на -요 (-아요/어요), а не -(스)ㅂ니다.');
+      else if (/(니다|니까)$/.test(tl) && /요$/.test(sl)) n.push('Стиль: тут потрібна офіційна форма -(스)ㅂ니다.');
+      const sj = jamo(sl), tj = jamo(tl), k = prefix(sj, tj);
+      if (k >= 2) {
+        const ps = /ㅆ/.test(sj.slice(k)), pt = /ㅆ/.test(tj.slice(k));
+        if (pt && !ps && !/ㅅ/.test(sj.slice(k))) n.push('Час: потрібен минулий час (-았/었/했-).');
+        if (ps && !pt) n.push('Час: тут не минулий час.');
+      }
+      const fut = W => W.some((w, i) => batchim(w.slice(-1)) === 'ㄹ' && /^(거|겁)/.test(W[i + 1] || ''));
+      if (fut(T) && !fut(S) && !/ㄹㄱㅓ/.test(jamo(st))) n.push('Час: потрібен майбутній час -(으)ㄹ 거예요.');
+      const neg = (W, w) => W.includes(w) || (w === '안' ? /지않/ : /지못/).test(W.join(''));
+      const sNo = !/안|못|않/.test(st);
+      if (neg(T, '못') && !neg(S, '못')) n.push(neg(S, '안') ? '«못» — «не можу, не вийшло», а «안» — просто «не». Тут потрібно 못.' : sNo ? 'Бракує заперечення: 못 перед дієсловом (не можу).' : '');
+      else if (neg(T, '안') && !neg(S, '안')) n.push(neg(S, '못') ? '«안» — просто «не», а «못» — «не можу». Тут потрібно 안.' : sNo ? 'Бракує заперечення: 안 перед дієсловом (або -지 않아요).' : '');
+      else if (!/안|못|않/.test(tt) && !sNo && (neg(S, '안') || neg(S, '못'))) n.push('Тут речення без заперечення.');
+      return n.filter(Boolean);
+    }
+    /* word alignment: equal / substitute / missing / extra, plus joined or split words (spacing) */
+    function align(S, T) {
+      const n = S.length, m = T.length, D = [], B = [];
+      for (let i = 0; i <= n; i++) { D[i] = []; B[i] = []; }
+      for (let i = 0; i <= n; i++) for (let j = 0; j <= m; j++) {
+        if (!i && !j) { D[0][0] = 0; continue; }
+        let best = Infinity, op = null;
+        const tryOp = (c, o) => { if (c < best) { best = c; op = o; } };
+        if (i && j) {
+          const s = S[i - 1], t = T[j - 1];
+          tryOp(D[i - 1][j - 1] + (s === t ? 0 : 0.3 + lev(jamo(s), jamo(t)) / Math.max(jamo(s).length, jamo(t).length)), s === t ? 'eq' : 'sub');
+        }
+        if (i) tryOp(D[i - 1][j] + 1, 'ins');
+        if (j) tryOp(D[i][j - 1] + 1, 'del');
+        if (i > 1 && j && S[i - 2] + S[i - 1] === T[j - 1]) tryOp(D[i - 2][j - 1] + 0.05, 'join');
+        if (i && j > 1 && S[i - 1] === T[j - 2] + T[j - 1]) tryOp(D[i - 1][j - 2] + 0.05, 'split');
+        D[i][j] = best; B[i][j] = op;
+      }
+      const ops = [];
+      for (let i = n, j = m; i || j;) {
+        const op = B[i][j];
+        if (op === 'eq' || op === 'sub') { ops.unshift({ op, s: S[i - 1], t: T[j - 1] }); i--; j--; }
+        else if (op === 'ins') { ops.unshift({ op, s: S[i - 1] }); i--; }
+        else if (op === 'del') { ops.unshift({ op, t: T[j - 1] }); j--; }
+        else if (op === 'join') { ops.unshift({ op, s: S[i - 2] + ' ' + S[i - 1], t: T[j - 1] }); i -= 2; j--; }
+        else { ops.unshift({ op, s: S[i - 1], t: T[j - 2] + ' ' + T[j - 1] }); i--; j -= 2; }
+      }
+      return ops;
+    }
+
+    function check(val, x) {
+      const v = clean(val), acc = accepted(x);
+      if (!v) return { ok: false, empty: true, notes: ['Напиши речення корейською.'] };
+      if (!/[가-힣]/.test(v)) return { ok: false, notes: ['Пиши корейськими літерами (한글).'], target: x.a };
+      const vt = tight(v);
+      const hit = acc.find(a => tight(a) === vt);
+      if (hit) return { ok: true, spacing: acc.some(a => clean(a) === v) ? null : clean(hit) };
+      const target = acc.map(a => [a, lev(jamo(vt), jamo(tight(a)))]).sort((p, r) => p[1] - r[1])[0][0];
+      const S = v.split(' '), notes = [], bag = W => W.slice().sort().join(' ');
+      /* same words, other order: fine if the predicate stays last (Korean word order is free), else wrong */
+      const perm = acc.map(a => clean(a).split(' ')).filter(T => T.length === S.length && bag(T) === bag(S));
+      const okPerm = perm.find(T => T[T.length - 1] === S[S.length - 1]);
+      if (okPerm) return { ok: true, order: okPerm.join(' ') };
+      const errs = (x.err || []).filter(e => vt.includes(tight(e[0])));
+      errs.forEach(e => notes.push(esc(e[1])));
+      if (perm.length) return { ok: false, order: true, notes: notes.concat(['Порядок слів: у корейському реченні присудок (дієслово) стоїть у кінці.']), target: perm[0].join(' ') };
+      const T = clean(target).split(' ');
+      const ops = align(S, T);
+      gramNotes(S, T).forEach(n => notes.push(n));
+      ops.forEach(o => {
+        if (o.op === 'sub') { if (!errs.some(e => tight(e[0]).includes(o.s) || o.s.includes(tight(e[0])))) notes.push(wordNote(o.s, o.t)); }
+        else if (o.op === 'del') notes.push(`Пропущено ${q(o.t)}.`);
+        else if (o.op === 'ins') notes.push(`Зайве слово ${q(o.s)}.`);
+        else if (o.op === 'join') notes.push(`Пробіл: ${q(o.t)} пишеться разом.`);
+        else if (o.op === 'split') notes.push(`Пробіл: ${q(o.t)} — окремо.`);
+      });
+      return { ok: false, notes: Array.from(new Set(notes)).slice(0, 5), target, ops };
+    }
+    function html(r) {
+      if (r.empty) return r.notes[0];
+      if (r.ok) return 'Правильно!' + (r.spacing ? `<div class="sw-sp muted small">Пробіли: <span class="ko">${esc(r.spacing)}</span></div>` : '')
+        + (r.order ? `<div class="sw-sp muted small">Так теж можна. Звичайніший порядок: <span class="ko">${esc(r.order)}</span></div>` : '');
+      const yours = r.ops ? r.ops.map(o => o.op === 'eq' || o.op === 'join' || o.op === 'split' ? esc(o.s)
+        : o.op === 'del' ? '<mark class="gap">＿</mark>' : `<mark class="bad">${esc(o.s)}</mark>`).join(' ') : '';
+      const right = r.ops ? r.ops.filter(o => o.op !== 'ins').map(o => o.op === 'sub' || o.op === 'del' ? `<mark class="fix">${esc(o.t)}</mark>` : esc(o.t)).join(' ') : esc(r.target);
+      return `${yours ? `<div class="sw-line"><span class="sw-tag">Ти:</span> <span class="ko">${yours}</span></div>` : ''}
+        <div class="sw-line"><span class="sw-tag">Правильно:</span> <span class="ko">${right}</span></div>
+        ${r.notes.length ? `<ul class="sw-notes">${r.notes.map(n => `<li>${n}</li>`).join('')}</ul>` : ''}`;
+    }
+    return { check, html, accepted, tight, expand };
+  })();
+
   const TYPE = {
+    sw: ['문장 쓰기', 'Напиши речення'],
     match: ['짝 맞추기', 'Знайди пари'], tf: ['보기와 같이', 'Зроби за зразком'], dlg: ['대화 완성', 'Доповни діалог'],
     ord: ['문장 만들기', 'Склади речення'], ls: ['듣기', 'Аудіювання'], rd: ['읽기', 'Читання'],
     ox: ['O / X', 'Правда чи ні'], wr: ['쓰기', 'Письмо']
   };
-  const FILTERS = [['all', 'Усі'], ['wb', 'Робочий зошит'], ['topik', 'TOPIK'], ['skills', 'Читання й аудіювання']];
-  const inFilter = (it, f) => f === 'all' || (f === 'wb' && /^WB/.test(it.src || '')) || (f === 'topik' && /TOPIK/.test(it.src || '')) || (f === 'skills' && /(듣기|읽기)/.test(it.src || ''));
+  const FILTERS = [['all', 'Усі'], ['wr', '쓰기 · Письмо'], ['wb', 'Робочий зошит'], ['topik', 'TOPIK'], ['skills', 'Читання й аудіювання']];
+  const inFilter = (it, f) => f === 'all' || (f === 'wr' && (it.t === 'sw' || it.t === 'wr')) || (f === 'wb' && /^WB/.test(it.src || '')) || (f === 'topik' && /TOPIK/.test(it.src || '')) || (f === 'skills' && /(듣기|읽기)/.test(it.src || ''));
 
   /* ---------- render ---------- */
   function body(it, i) {
@@ -57,6 +229,12 @@
       case 'ox':
         return `${it.txt ? `<div class="passage ko">${esc(it.txt)}</div>` : ''}${it.say ? `<div class="row" style="margin-bottom:12px"><button class="btn sm p-play">🔊 Слухати</button><button class="btn sm secondary p-slow">🐢 Повільно</button></div>` : ''}
           ${it.s.map((s, k) => `<div class="ox-row" data-k="${k}"><span class="ko grow">${esc(s[0])}</span><button class="oxb" data-v="1">O</button><button class="oxb" data-v="0">X</button></div>`).join('')}<div class="ex-fb"></div>`;
+      case 'sw':
+        return it.it.map((x, k) => `<div class="tf-row sw-row" data-k="${k}">
+          ${x.ko ? `<div class="ko cue">${k + 1}) ${esc(x.ko)}</div>${x.uk ? `<div class="muted small sw-uk">${esc(x.uk)}</div>` : ''}` : `<div class="cue">${k + 1}) ${esc(x.uk)}</div>`}
+          ${x.c ? `<button class="btn ghost sm sw-hbtn" data-p="hint">💡 Підказка</button><div class="sw-hint ko small" hidden>${esc(x.c)}</div>` : ''}
+          <textarea class="ex-input p-in ko sw-in" rows="2" lang="ko" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Пиши корейською…"></textarea>
+          <div class="ex-fb"></div></div>`).join('');
       case 'wr':
         return `${it.use ? `<div class="row" style="margin-bottom:10px">${it.use.map(u => `<span class="chip ko">${esc(u)}</span>`).join('')}</div>` : ''}
           <textarea class="ko p-wr" placeholder="Пиши тут корейською…"></textarea>
@@ -115,6 +293,7 @@
       if (t.classList.contains('p-slow')) return say(it.say, true);
       if (t.classList.contains('p-show')) { const x = card.querySelector('.ls-text'); x.hidden = !x.hidden; return; }
       if (t.dataset.p === 'reset') return rerender(null);
+      if (t.dataset.p === 'hint') { const h = t.nextElementSibling; h.hidden = !h.hidden; return; }
 
       /* match */
       if (t.classList.contains('mbtn')) {
@@ -208,6 +387,13 @@
           fb(rq.querySelector('.ex-fb'), ok, null); total++; if (ok) right++;
         });
         if (it.t === 'ls') card.querySelector('.ls-text').hidden = false;
+      } else if (it.t === 'sw') {
+        card.querySelectorAll('.sw-row').forEach(row => {
+          const x = it.it[+row.dataset.k], inp = row.querySelector('.sw-in'), r = SW.check(inp.value, x), f = row.querySelector('.ex-fb');
+          inp.classList.toggle('right', r.ok); inp.classList.toggle('wrong', !r.ok);
+          f.className = 'ex-fb sw-fb ' + (r.ok ? 'right' : 'wrong'); f.innerHTML = SW.html(r);
+          total++; if (r.ok) right++;
+        });
       } else if (it.t === 'ox') {
         card.querySelectorAll('.ox-row').forEach(row => {
           const want = it.s[+row.dataset.k][1] ? '1' : '0', sel = row.querySelector('.oxb.sel'), ok = !!sel && sel.dataset.v === want;
@@ -236,5 +422,5 @@
     });
   }
 
-  window.Practice = { render, bind };
+  window.Practice = { render, bind, sw: SW };
 })();

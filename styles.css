@@ -408,3 +408,19 @@ input[type=email], input[type=password] { width: 100%; border: 1px solid var(--b
 .back { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; margin-bottom: 16px; font-size: 14px; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* 쓰기 · sentence writing (practice type sw) */
+.sw-in { width: 100%; min-height: 0; resize: none; font-size: 17px; line-height: 1.45; }
+.sw-uk { margin: -2px 0 6px; }
+.sw-hbtn { margin: 0 0 6px; padding-left: 0; }
+.sw-hint { margin: -2px 0 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); border: 1px dashed var(--border); }
+.sw-fb { line-height: 1.5; }
+.sw-fb .sw-line { margin-top: 4px; color: var(--ink); }
+.sw-fb .sw-tag { color: var(--muted); font-size: 13px; }
+.sw-fb mark { border-radius: 4px; padding: 0 3px; }
+.sw-fb mark.bad { background: var(--err-bg); color: var(--err); text-decoration: line-through; text-decoration-thickness: 1px; }
+.sw-fb mark.gap { background: var(--err-bg); color: var(--err); }
+.sw-fb mark.fix { background: var(--ok-bg); color: var(--ok); font-weight: 700; }
+.sw-fb .sw-notes { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
+.sw-fb .sw-notes li { margin: 2px 0; }
+.sw-fb .sw-sp { margin-top: 2px; }
